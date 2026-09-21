@@ -498,15 +498,17 @@ with tab6:
     st.subheader("Calibrated Model Holdout Validation Metrics")
     st.write("Strict Chronological Holdout Validation Window: **July 23, 2026 – July 31, 2026** (3,780 Test Samples)")
     
-    vm1, vm2, vm3, vm4 = st.columns(4)
+    vm1, vm2, vm3, vm4, vm5 = st.columns(5)
     with vm1:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">PR-AUC Score</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.7645</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">PR-AUC Score</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">0.7925</div></div>', unsafe_allow_html=True)
     with vm2:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">ROC-AUC Score</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.9633</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">ROC-AUC Score</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">0.9611</div></div>', unsafe_allow_html=True)
     with vm3:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Precision (Thresh 0.5)</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.6972</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Opt Threshold</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">0.1932</div></div>', unsafe_allow_html=True)
     with vm4:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Recall (Thresh 0.5)</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.7294</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Precision @ Opt</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">0.6230</div></div>', unsafe_allow_html=True)
+    with vm5:
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Recall @ Opt</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">0.9109</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     col_v1, col_v2 = st.columns(2)
