@@ -18,7 +18,7 @@ def evaluate_outage_classifier(features_csv_path: str, model_save_path: str, fig
     split_date = pd.Timestamp('2026-07-23 00:00:00')
     test_df = df[df['window_timestamp'] >= split_date].copy()
 
-    feature_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h']
+    feature_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h']
     target_col = 'target_outage_next_2h'
 
     X_test, y_test = test_df[feature_cols], test_df[target_col]
@@ -42,7 +42,6 @@ def evaluate_outage_classifier(features_csv_path: str, model_save_path: str, fig
     print("\nClassification Report:")
     print(classification_report(y_test, y_pred, target_names=['Normal', 'Cell Unavailable']))
 
-    # Permutation Feature Importance
     perm = permutation_importance(model, X_test, y_test, scoring='average_precision', n_repeats=10, random_state=42)
     imp_df = pd.DataFrame({
         'Feature': feature_cols,
@@ -54,7 +53,6 @@ def evaluate_outage_classifier(features_csv_path: str, model_save_path: str, fig
 
     os.makedirs(figures_dir, exist_ok=True)
 
-    # PR Curve Plot
     plt.figure(figsize=(7, 5))
     plt.plot(recall, precision, color='#1f77b4', lw=2, label=f'Model (PR-AUC = {pr_auc:.3f})')
     plt.xlabel('Recall')
@@ -66,7 +64,6 @@ def evaluate_outage_classifier(features_csv_path: str, model_save_path: str, fig
     plt.savefig(os.path.join(figures_dir, 'pr_curve.png'), dpi=300)
     plt.close()
 
-    # Feature Importance Plot
     plt.figure(figsize=(8, 4.5))
     sns.barplot(data=imp_df, x='Importance', y='Feature', hue='Feature', palette='mako', legend=False)
     plt.title('Feature Importance (PR-AUC Permutation Impact)')

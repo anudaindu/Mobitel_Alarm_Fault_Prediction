@@ -5,7 +5,7 @@ import numpy as np
 def generate_sliding_window_features(subset_csv_path: str, output_features_path: str) -> pd.DataFrame:
     """
     Computes a 2-hour step sliding window across July 2026 for site-level features:
-    - Lookback Window (X): Past 6 hours [T-6h, T)
+    - Lookback Window (X): Past 6 hours [T-6h, T) and past 24 hours [T-24h, T)
     - Prediction Window (Y): Next 2 hours [T, T+2h)
     
     Features engineered per window:
@@ -14,8 +14,10 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
     - major_alarms_6h
     - rru_alarms_6h
     - bbu_alarms_6h
+    - total_alarms_24h
     - target_outage_next_2h (Binary Target)
     """
+    print(f"Reading subset dataset from {subset_csv_path}...")
     df = pd.read_csv(subset_csv_path, low_memory=False)
     df['event_time'] = pd.to_datetime(df['Occurred On (NT)'])
     df.sort_values(by=['site_id', 'event_time'], inplace=True)
@@ -39,6 +41,8 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
     sites = df['site_id'].unique()
     feature_rows = []
 
+    print(f"Generating sliding window features for {len(sites)} sites across {len(time_points)} 2-hour time steps...")
+
     for site in sites:
         site_df = df[df['site_id'] == site]
         times = site_df['event_time'].values
@@ -50,16 +54,21 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
 
         for t in time_points:
             t_np = t.to_datetime64()
-            lookback_start = (t - pd.Timedelta(hours=6)).to_datetime64()
+            lookback_6h_start = (t - pd.Timedelta(hours=6)).to_datetime64()
+            lookback_24h_start = (t - pd.Timedelta(hours=24)).to_datetime64()
             predict_end = (t + pd.Timedelta(hours=2)).to_datetime64()
 
-            # Lookback window [T-6h, T)
-            idx_6h = (times >= lookback_start) & (times < t_np)
+            # Lookback window 6h [T-6h, T)
+            idx_6h = (times >= lookback_6h_start) & (times < t_np)
             total_alarms_6h = int(np.sum(idx_6h))
             critical_alarms_6h = int(np.sum(is_crit[idx_6h]))
             major_alarms_6h = int(np.sum(is_maj[idx_6h]))
             rru_alarms_6h = int(np.sum(is_rru[idx_6h]))
             bbu_alarms_6h = int(np.sum(is_bbu[idx_6h]))
+
+            # Lookback window 24h [T-24h, T)
+            idx_24h = (times >= lookback_24h_start) & (times < t_np)
+            total_alarms_24h = int(np.sum(idx_24h))
 
             # Prediction window [T, T+2h)
             idx_2h_target = (times >= t_np) & (times < predict_end)
@@ -73,6 +82,7 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
                 'major_alarms_6h': major_alarms_6h,
                 'rru_alarms_6h': rru_alarms_6h,
                 'bbu_alarms_6h': bbu_alarms_6h,
+                'total_alarms_24h': total_alarms_24h,
                 'target_outage_next_2h': target_outage_next_2h
             })
 
