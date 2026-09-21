@@ -72,6 +72,12 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
             rru_alarms_6h = int(np.sum(is_rru[idx_6h]))
             bbu_alarms_6h = int(np.sum(is_bbu[idx_6h]))
 
+            # Streak / Sequence metrics from notebook 04
+            crit_streak_6h = 0
+            if total_alarms_6h > 1:
+                crit_arr = is_crit[idx_6h]
+                crit_streak_6h = int(np.max(np.convolve(crit_arr, np.ones(2, dtype=int), mode='valid') == 2)) if len(crit_arr) >= 2 else 0
+
             idx_24h = (times >= lookback_24h_start) & (times < t_np)
             total_alarms_24h = int(np.sum(idx_24h))
 
@@ -88,11 +94,23 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
                 'major_alarms_6h': major_alarms_6h,
                 'rru_alarms_6h': rru_alarms_6h,
                 'bbu_alarms_6h': bbu_alarms_6h,
+                'consecutive_critical_streak_6h': crit_streak_6h,
                 'total_alarms_24h': total_alarms_24h,
                 'target_outage_next_2h': target_outage_next_2h
             })
 
     features_df = pd.DataFrame(feature_rows)
+
+    # Multicollinearity Audit (>0.85 correlation threshold per notebook 04)
+    num_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'consecutive_critical_streak_6h', 'total_alarms_24h']
+    num_df = features_df[num_cols]
+    corr_matrix = num_df.corr().abs()
+    upper_tri = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    high_corr_cols = [column for column in upper_tri.columns if any(upper_tri[column] > 0.85)]
+    if high_corr_cols:
+        print(f"[Feature Selection] Dropping high-correlation redundant features (>0.85): {high_corr_cols}")
+        features_df.drop(columns=high_corr_cols, inplace=True)
+
     os.makedirs(os.path.dirname(os.path.abspath(output_features_path)), exist_ok=True)
     features_df.to_csv(output_features_path, index=False)
     print(f"Generated feature matrix shape: {features_df.shape} -> saved to {output_features_path}")

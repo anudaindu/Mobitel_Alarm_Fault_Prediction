@@ -182,12 +182,17 @@ def load_raw_logs():
 @st.cache_resource
 def load_model():
     if os.path.exists(MODEL_PATH):
-        return joblib.load(MODEL_PATH)
-    return None
+        payload = joblib.load(MODEL_PATH)
+        if isinstance(payload, dict) and 'model' in payload:
+            feats = payload.get('features', ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h'])
+            thresh = payload.get('optimal_threshold', 0.5)
+            return payload['model'], feats, thresh
+        return payload, ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h'], 0.5
+    return None, ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h'], 0.5
 
 features_df = load_features()
 raw_subset_df = load_raw_logs()
-model = load_model()
+model, feature_cols, optimal_threshold = load_model()
 
 # Enterprise Header (Zero Emojis)
 st.markdown("""
@@ -213,8 +218,8 @@ with tab1:
         latest_timestamp = features_df['window_timestamp'].max()
         latest_df = features_df[features_df['window_timestamp'] == latest_timestamp].copy()
         
-        feature_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h']
-        latest_df['failure_probability'] = model.predict_proba(latest_df[feature_cols])[:, 1]
+        valid_cols = [c for c in feature_cols if c in latest_df.columns]
+        latest_df['failure_probability'] = model.predict_proba(latest_df[valid_cols])[:, 1]
         latest_df.sort_values(by='failure_probability', ascending=False, inplace=True)
         
         latest_df['risk_status'] = latest_df['failure_probability'].apply(
@@ -508,8 +513,8 @@ with tab6:
     with col_v1:
         st.write("### Feature Importance Scores (PR-AUC Permutation Impact)")
         imp_data = pd.DataFrame({
-            'Feature': ['rru_alarms_6h', 'critical_alarms_6h', 'total_alarms_24h', 'major_alarms_6h', 'total_alarms_6h', 'bbu_alarms_6h'],
-            'Importance': [0.3160, 0.2652, 0.2051, 0.1569, 0.0685, 0.0665]
+            'Feature': ['total_alarms_6h', 'rru_alarms_6h', 'critical_alarms_6h', 'consecutive_critical_streak_6h', 'bbu_alarms_6h'],
+            'Importance': [0.5098, 0.4773, 0.3690, 0.1986, 0.0838]
         }).sort_values('Importance', ascending=True)
         
         fig_imp = px.bar(imp_data, x='Importance', y='Feature', orientation='h', color='Importance', color_continuous_scale='Blues', template='plotly_white')
@@ -519,8 +524,8 @@ with tab6:
     with col_v2:
         st.write("### Calibrated Failure Probability Distribution")
         if not features_df.empty and model is not None:
-            feature_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h']
-            probs = model.predict_proba(features_df[feature_cols])[:, 1]
+            valid_cols = [c for c in feature_cols if c in features_df.columns]
+            probs = model.predict_proba(features_df[valid_cols])[:, 1]
             fig_hist = px.histogram(probs, nbins=50, labels={'value': 'Predicted Outage Probability'}, color_discrete_sequence=['#1E3A8A'], template='plotly_white')
             fig_hist.update_layout(xaxis_title="Calibrated Failure Probability", yaxis_title="Sample Count")
             st.plotly_chart(fig_hist, use_container_width=True)

@@ -87,8 +87,10 @@ def clean_raw_alarm_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     mo_col = 'mo_name' if 'mo_name' in df.columns else ('location_information' if 'location_information' in df.columns else None)
     if mo_col:
         df['site_id'] = df[mo_col].apply(extract_physical_site_id)
+        df['mo_technology'] = df[mo_col].astype(str).str.extract(r'_(LTE|NR|GSM|UMTS|4G|5G|EUCELLSECTEQ|UCELLSECTEQ|_G|_L|_U)_', flags=re.IGNORECASE)[0].fillna('UNKNOWN')
     else:
         df['site_id'] = df['enodeb_id'].apply(lambda x: x if x != '-' else 'UNKNOWN')
+        df['mo_technology'] = 'UNKNOWN'
 
     # Fallback to eNodeB ID or location info if site_id is UNKNOWN
     df['site_id'] = np.where(
