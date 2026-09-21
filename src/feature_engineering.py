@@ -5,25 +5,25 @@ import numpy as np
 def generate_sliding_window_features(subset_csv_path: str, output_features_path: str) -> pd.DataFrame:
     """
     Computes a 2-hour step sliding window across July 2026 for site-level features:
+    - Grouping: Strictly by physical Site ID (site_id)
+    - Distinct Identifiers: Preserves enodeb_id (4G) and gnodeb_id (5G) as separate columns.
     - Lookback Window (X): Past 6 hours [T-6h, T) and past 24 hours [T-24h, T)
     - Prediction Window (Y): Next 2 hours [T, T+2h)
-    
-    Features engineered per window:
-    - total_alarms_6h
-    - critical_alarms_6h
-    - major_alarms_6h
-    - rru_alarms_6h
-    - bbu_alarms_6h
-    - total_alarms_24h
-    - target_outage_next_2h (Binary Target)
     """
     print(f"Reading subset dataset from {subset_csv_path}...")
     df = pd.read_csv(subset_csv_path, low_memory=False)
-    df['event_time'] = pd.to_datetime(df['Occurred On (NT)'])
+    
+    time_col = 'event_time' if 'event_time' in df.columns else 'Occurred On (NT)'
+    df['event_time'] = pd.to_datetime(df[time_col])
     df.sort_values(by=['site_id', 'event_time'], inplace=True)
 
-    df['is_critical'] = (df['Severity'].astype(str).str.lower() == 'critical').astype(int)
-    df['is_major'] = (df['Severity'].astype(str).str.lower() == 'major').astype(int)
+    if 'enodeb_id' not in df.columns:
+        df['enodeb_id'] = '-'
+    if 'gnodeb_id' not in df.columns:
+        df['gnodeb_id'] = '-'
+
+    df['is_critical'] = (df['severity'].astype(str).str.lower() == 'critical').astype(int)
+    df['is_major'] = (df['severity'].astype(str).str.lower() == 'major').astype(int)
 
     alarm_name_str = df['alarm_name'].astype(str).str.lower()
     rru_pattern = r'rf|rru|vswr'
@@ -41,7 +41,11 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
     sites = df['site_id'].unique()
     feature_rows = []
 
-    print(f"Generating sliding window features for {len(sites)} sites across {len(time_points)} 2-hour time steps...")
+    print(f"Generating sliding window features for {len(sites)} physical sites across {len(time_points)} time steps...")
+
+    # Map physical site_id to eNodeB ID and gNodeB ID
+    site_enodeb_map = df.groupby('site_id')['enodeb_id'].apply(lambda s: s[s != '-'].iloc[0] if (s != '-').any() else '-').to_dict()
+    site_gnodeb_map = df.groupby('site_id')['gnodeb_id'].apply(lambda s: s[s != '-'].iloc[0] if (s != '-').any() else '-').to_dict()
 
     for site in sites:
         site_df = df[df['site_id'] == site]
@@ -52,13 +56,15 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
         is_bbu = site_df['is_bbu'].values
         is_out = site_df['is_outage'].values
 
+        enodeb_val = site_enodeb_map.get(site, '-')
+        gnodeb_val = site_gnodeb_map.get(site, '-')
+
         for t in time_points:
             t_np = t.to_datetime64()
             lookback_6h_start = (t - pd.Timedelta(hours=6)).to_datetime64()
             lookback_24h_start = (t - pd.Timedelta(hours=24)).to_datetime64()
             predict_end = (t + pd.Timedelta(hours=2)).to_datetime64()
 
-            # Lookback window 6h [T-6h, T)
             idx_6h = (times >= lookback_6h_start) & (times < t_np)
             total_alarms_6h = int(np.sum(idx_6h))
             critical_alarms_6h = int(np.sum(is_crit[idx_6h]))
@@ -66,16 +72,16 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
             rru_alarms_6h = int(np.sum(is_rru[idx_6h]))
             bbu_alarms_6h = int(np.sum(is_bbu[idx_6h]))
 
-            # Lookback window 24h [T-24h, T)
             idx_24h = (times >= lookback_24h_start) & (times < t_np)
             total_alarms_24h = int(np.sum(idx_24h))
 
-            # Prediction window [T, T+2h)
             idx_2h_target = (times >= t_np) & (times < predict_end)
             target_outage_next_2h = 1 if np.sum(is_out[idx_2h_target]) > 0 else 0
 
             feature_rows.append({
                 'site_id': site,
+                'enodeb_id': enodeb_val,
+                'gnodeb_id': gnodeb_val,
                 'window_timestamp': t,
                 'total_alarms_6h': total_alarms_6h,
                 'critical_alarms_6h': critical_alarms_6h,

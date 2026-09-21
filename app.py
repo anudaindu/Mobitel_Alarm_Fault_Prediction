@@ -174,7 +174,8 @@ def load_features():
 def load_raw_logs():
     if os.path.exists(SUBSET_PATH):
         df = pd.read_csv(SUBSET_PATH, low_memory=False)
-        df['event_time'] = pd.to_datetime(df['Occurred On (NT)'])
+        time_col = 'event_time' if 'event_time' in df.columns else 'Occurred On (NT)'
+        df['event_time'] = pd.to_datetime(df[time_col])
         return df
     return pd.DataFrame()
 
@@ -188,7 +189,7 @@ features_df = load_features()
 raw_subset_df = load_raw_logs()
 model = load_model()
 
-# Header Section (Zero Emojis)
+# Enterprise Header (Zero Emojis)
 st.markdown("""
     <div class="enterprise-header">
         <h1 class="enterprise-title">Telecom Tower Outage Prediction System</h1>
@@ -201,7 +202,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Priority Outage Queue",
     "Tower Search & Diagnostic Inspector",
     "Manual Log Upload & Retention Engine",
-    "5G Network Readiness Preview",
+    "5G Network Expansion Preview",
     "Historical Analytics & Trends",
     "Model Validation & Feature Importances"
 ])
@@ -240,15 +241,18 @@ with tab1:
         st.subheader("Priority Outage Operational Queue (Next 2-Hour Lookahead)")
         st.write(f"Prediction Window Timestamp: **{latest_timestamp.strftime('%Y-%m-%d %H:%M:%S')}**")
 
+        # Multi-Identifier Layout: Site ID, eNodeB ID (4G), gNodeB ID (5G) in separate adjacent columns
         queue_df = latest_df[[
-            'site_id', 'failure_probability', 'risk_status',
+            'site_id', 'enodeb_id', 'gnodeb_id', 'failure_probability', 'risk_status',
             'critical_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h',
             'major_alarms_6h', 'total_alarms_6h', 'total_alarms_24h'
         ]].copy()
 
         queue_df['failure_probability'] = (queue_df['failure_probability'] * 100).map('{:.1f}%'.format)
         queue_df.rename(columns={
-            'site_id': 'Site ID (eNodeB / gNodeB)',
+            'site_id': 'Site ID',
+            'enodeb_id': 'eNodeB ID (4G)',
+            'gnodeb_id': 'gNodeB ID (5G)',
             'failure_probability': 'Outage Probability',
             'risk_status': 'Risk Status',
             'critical_alarms_6h': 'Critical Alarms (6h)',
@@ -273,20 +277,46 @@ with tab1:
 # --- TAB 2: TOWER SEARCH & DIAGNOSTIC INSPECTOR ---
 with tab2:
     if not features_df.empty:
-        site_list = sorted(features_df['site_id'].unique().tolist())
-        selected_site = st.selectbox("Search / Select Tower Site ID (4G eNodeB / 5G gNodeB):", site_list)
+        # Multi-identifier search list: Search by Site ID, eNodeB ID (4G), or gNodeB ID (5G)
+        site_id_options = sorted(features_df['site_id'].unique().tolist())
+        enodeb_options = sorted([e for e in features_df['enodeb_id'].unique() if e != '-'])
+        gnodeb_options = sorted([g for g in features_df['gnodeb_id'].unique() if g != '-'])
         
+        search_options = site_id_options + [f"eNodeB: {e}" for e in enodeb_options] + [f"gNodeB: {g}" for g in gnodeb_options]
+        
+        selected_search = st.selectbox("Search / Select Tower Identifier (Site ID / eNodeB ID / gNodeB ID):", search_options)
+        
+        # Resolve target site_id from selection
+        if selected_search.startswith("eNodeB: "):
+            target_enodeb = selected_search.replace("eNodeB: ", "")
+            selected_site = features_df[features_df['enodeb_id'] == target_enodeb]['site_id'].iloc[0]
+        elif selected_search.startswith("gNodeB: "):
+            target_gnodeb = selected_search.replace("gNodeB: ", "")
+            selected_site = features_df[features_df['gnodeb_id'] == target_gnodeb]['site_id'].iloc[0]
+        else:
+            selected_site = selected_search
+
         site_features = features_df[features_df['site_id'] == selected_site].sort_values('window_timestamp')
         latest_row = site_features.iloc[-1]
         
+        target_enodeb = latest_row.get('enodeb_id', '-')
+        target_gnodeb = latest_row.get('gnodeb_id', '-')
+
         feature_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h']
         input_data = pd.DataFrame([latest_row[feature_cols].to_dict()])
         prob = model.predict_proba(input_data)[0, 1] if model is not None else 0.0
         
         c_diag1, c_diag2 = st.columns([1, 2])
         with c_diag1:
-            st.markdown("### Site Operational Status")
-            st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600; text-transform:uppercase;">Selected Site</div><div style="font-size:24px; font-weight:700; color:#0F172A;">{selected_site}</div></div>', unsafe_allow_html=True)
+            st.markdown("### Site Identifiers & Operational Risk")
+            m_s1, m_s2, m_s3 = st.columns(3)
+            with m_s1:
+                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">Site ID</div><div style="font-size:18px; font-weight:700; color:#0F172A;">{selected_site}</div></div>', unsafe_allow_html=True)
+            with m_s2:
+                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">eNodeB ID (4G)</div><div style="font-size:18px; font-weight:700; color:#1E3A8A;">{target_enodeb}</div></div>', unsafe_allow_html=True)
+            with m_s3:
+                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">gNodeB ID (5G)</div><div style="font-size:18px; font-weight:700; color:#1E3A8A;">{target_gnodeb}</div></div>', unsafe_allow_html=True)
+
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600; text-transform:uppercase;">2-Hour Outage Probability</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">{prob*100:.1f}%</div></div>', unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
@@ -349,7 +379,7 @@ with tab2:
         st.subheader("Historical Raw Alarm Event Stream (Selected Tower)")
         if not raw_subset_df.empty:
             tower_alarms = raw_subset_df[raw_subset_df['site_id'] == selected_site].sort_values('event_time', ascending=False)
-            display_cols = ['event_time', 'severity', 'alarm_name', 'mo_name', 'location_information']
+            display_cols = ['event_time', 'site_id', 'enodeb_id', 'gnodeb_id', 'severity', 'alarm_name', 'mo_name', 'location_information']
             present_cols = [c for c in display_cols if c in tower_alarms.columns]
             st.dataframe(tower_alarms[present_cols].head(100), height=350, width='stretch')
 
@@ -397,7 +427,7 @@ with tab3:
         purge_res = purge_expired_logs(retention_days=60)
         st.info(f"Purge scan executed. Purged DB Rows: {purge_res['purged_db_rows']}, Purged Expired Raw Files: {purge_res['purged_raw_files']}")
 
-# --- TAB 4: 5G NETWORK ARCHITECTURE & READINESS PREVIEW ---
+# --- TAB 4: 5G NETWORK EXPANSION PREVIEW ---
 with tab4:
     st.subheader("5G Network Expansion Preview")
     st.write("Future expansion module reserved for 5G NR gNodeB Active Antenna Unit (AAU) and eCPRI precursor analytics.")
@@ -465,21 +495,21 @@ with tab6:
     
     vm1, vm2, vm3, vm4 = st.columns(4)
     with vm1:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">PR-AUC Score</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.6760</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">PR-AUC Score</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.7645</div></div>', unsafe_allow_html=True)
     with vm2:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">ROC-AUC Score</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.8902</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">ROC-AUC Score</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.9633</div></div>', unsafe_allow_html=True)
     with vm3:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Precision (Thresh 0.5)</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.7948</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Precision (Thresh 0.5)</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.6972</div></div>', unsafe_allow_html=True)
     with vm4:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Recall (Thresh 0.5)</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.4513</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Recall (Thresh 0.5)</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">0.7294</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     col_v1, col_v2 = st.columns(2)
     with col_v1:
         st.write("### Feature Importance Scores (PR-AUC Permutation Impact)")
         imp_data = pd.DataFrame({
-            'Feature': ['critical_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'major_alarms_6h', 'total_alarms_24h', 'total_alarms_6h'],
-            'Importance': [0.3847, 0.2763, 0.0675, 0.0472, 0.0452, 0.0162]
+            'Feature': ['rru_alarms_6h', 'critical_alarms_6h', 'total_alarms_24h', 'major_alarms_6h', 'total_alarms_6h', 'bbu_alarms_6h'],
+            'Importance': [0.3160, 0.2652, 0.2051, 0.1569, 0.0685, 0.0665]
         }).sort_values('Importance', ascending=True)
         
         fig_imp = px.bar(imp_data, x='Importance', y='Feature', orientation='h', color='Importance', color_continuous_scale='Blues', template='plotly_white')
