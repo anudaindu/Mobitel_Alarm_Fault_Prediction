@@ -399,46 +399,18 @@ with tab3:
 
 # --- TAB 4: 5G NETWORK ARCHITECTURE & READINESS PREVIEW ---
 with tab4:
-    st.subheader("5G NR Network Architecture & Readiness Preview")
-    st.write("Comparative diagnostic framework evaluating precursor hardware fault signatures across 4G LTE eNodeBs versus 5G NR gNodeBs.")
-
-    col_5g1, col_5g2 = st.columns(2)
-    with col_5g1:
-        st.markdown("""
-            <div class="card-blue-gradient">
-                <div style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">4G LTE Precursor Indicators</div>
-                <ul style="font-size: 13px; line-height: 1.6; margin: 0; padding-left: 20px;">
-                    <li>CPRI Optical Interface Transmission Errors (1.25G to 9.8G)</li>
-                    <li>RF Unit Power Amplifier Over-Temperature Trips</li>
-                    <li>VSWR Transceiver Cable Impedance Mismatches</li>
-                    <li>Mains Input AC Power Out of Range Grid Outages</li>
-                    <li>S1/X2 IP Backhaul Control Plane Packet Loss</li>
-                </ul>
-            </div>
-        """, unsafe_allow_html=True)
-    with col_5g2:
-        st.markdown("""
-            <div class="card-red-gradient">
-                <div style="font-size: 16px; font-weight: 700; margin-bottom: 8px;">5G NR Precursor Indicators (Next-Gen)</div>
-                <ul style="font-size: 13px; line-height: 1.6; margin: 0; padding-left: 20px;">
-                    <li>eCPRI High-Speed Optical Link Packet Drops (25GE)</li>
-                    <li>AAU Active Antenna Array Beamforming Unit Faults</li>
-                    <li>Sub-6GHz / mmWave RF Channel Calibration Errors</li>
-                    <li>Massive MIMO Baseband Board Overload Failures</li>
-                    <li>IEEE 1588v2 Clock Synchronization Phase Deviations</li>
-                </ul>
-            </div>
-        """, unsafe_allow_html=True)
-
+    st.subheader("5G Network Expansion Preview")
+    st.write("Future expansion module reserved for 5G NR gNodeB Active Antenna Unit (AAU) and eCPRI precursor analytics.")
+    
+    st.markdown("""
+        <div class="card-white-metric" style="max-width: 600px; padding: 24px;">
+            <div style="font-size: 16px; font-weight: 700; color: #0F172A; margin-bottom: 8px;">5G NR Prediction Engine (Phase 2 Development)</div>
+            <div style="font-size: 13px; color: #64748B; margin-bottom: 16px;">Dual-mode 4G/5G joint predictive analytics and Massive MIMO beamforming fault indicators are scheduled for Phase 2 integration.</div>
+        </div>
+    """, unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
-    st.write("### 4G vs 5G Failure Precursor Comparison Table")
-    comp_df = pd.DataFrame({
-        'System Parameter': ['Baseband Processing Unit', 'Radio Frequency Unit', 'Optical Link Interface', 'Antenna System', 'Clock Sync Protocol'],
-        '4G LTE Architecture': ['BBU3900 / BBU3910 (UBBP)', 'Remote Radio Unit (RRU)', 'CPRI (up to 9.8 Gbps)', 'Passive Antenna Feeder', 'IP Clock / GPS'],
-        '5G NR Architecture': ['BBU5900 (UBBPg Baseband)', 'Active Antenna Unit (AAU)', 'eCPRI (25 Gbps)', 'Massive MIMO 64T64R Array', 'IEEE 1588v2 PTP / SyncE'],
-        'Primary Precursor Warning': ['Board Maintenance Link Fault', 'RF Unit Maintenance Failure', 'Optical Module Rx Loss', 'VSWR Antenna Fault', 'Clock Reference Out of Sync']
-    })
-    st.table(comp_df)
+    if st.button("Enable 5G NR Diagnostic Module (Phase 2 Preview)", disabled=True):
+        pass
 
 # --- TAB 5: HISTORICAL ANALYTICS & TIME-SERIES TRENDS ---
 with tab5:
