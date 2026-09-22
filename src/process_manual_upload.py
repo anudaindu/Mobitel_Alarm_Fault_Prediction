@@ -16,8 +16,8 @@ def process_manual_file_upload(file_input, original_filename: str) -> dict:
     """
     Processes a manually uploaded Excel (.xlsx/.xls) or CSV daily alarm log:
     1. Saves copy to data/daily_uploads/
-    2. Runs integrated notebook data cleaning pipeline.
-    3. Ingests cleaned records into DuckDB master database.
+    2. Runs integrated notebook data cleaning & strict 6-char site ID parsing.
+    3. Ingests cleaned records into SQLite master database (telecom_master_history.db).
     4. Triggers automated 60-day retention auto-purge.
     5. Computes site sliding-window features and predicts 2-hour outage risk scores.
     """
@@ -51,6 +51,7 @@ def process_manual_file_upload(file_input, original_filename: str) -> dict:
     alarm_str = cleaned_df['alarm_name'].astype(str).str.lower()
     cleaned_df['is_rru'] = alarm_str.str.contains(r'rf|rru|vswr', regex=True).astype(int)
     cleaned_df['is_bbu'] = alarm_str.str.contains(r'bbu|board|subrack|transmission', regex=True).astype(int)
+    cleaned_df['is_power'] = alarm_str.str.contains(r'power|mains|rectifier|battery', regex=True).astype(int)
 
     sites = cleaned_df['site_id'].unique()
     latest_t = cleaned_df['event_time'].max()
@@ -63,6 +64,7 @@ def process_manual_file_upload(file_input, original_filename: str) -> dict:
         is_maj = site_df['is_major'].values
         is_rru = site_df['is_rru'].values
         is_bbu = site_df['is_bbu'].values
+        is_pow = site_df['is_power'].values
 
         t_np = latest_t.to_datetime64()
         start_6h = (latest_t - pd.Timedelta(hours=6)).to_datetime64()
@@ -73,22 +75,33 @@ def process_manual_file_upload(file_input, original_filename: str) -> dict:
 
         feature_rows.append({
             'site_id': site,
+            'node_identifier': site_df['node_identifier'].iloc[0] if 'node_identifier' in site_df.columns else site,
             'window_timestamp': latest_t,
             'total_alarms_6h': int(np.sum(idx_6h)),
             'critical_alarms_6h': int(np.sum(is_crit[idx_6h])),
             'major_alarms_6h': int(np.sum(is_maj[idx_6h])),
             'rru_alarms_6h': int(np.sum(is_rru[idx_6h])),
             'bbu_alarms_6h': int(np.sum(is_bbu[idx_6h])),
+            'power_alarms_6h': int(np.sum(is_pow[idx_6h])),
             'total_alarms_24h': int(np.sum(idx_24h))
         })
 
     features_df = pd.DataFrame(feature_rows)
 
-    model = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
-    feature_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h']
+    model_payload = joblib.load(MODEL_PATH) if os.path.exists(MODEL_PATH) else None
+    if isinstance(model_payload, dict) and 'model' in model_payload:
+        model = model_payload['model']
+        feature_cols = model_payload.get('features', ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h'])
+    else:
+        model = model_payload
+        feature_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h']
     
     if model is not None and not features_df.empty:
-        probs = model.predict_proba(features_df[feature_cols])[:, 1]
+        X_input = pd.DataFrame(index=features_df.index)
+        for col in feature_cols:
+            X_input[col] = features_df[col] if col in features_df.columns else 0.0
+
+        probs = model.predict_proba(X_input)[:, 1]
         features_df['failure_probability'] = probs
         features_df['risk_status'] = features_df['failure_probability'].apply(
             lambda p: 'CRITICAL' if p >= 0.65 else ('WARNING' if p >= 0.35 else 'NOMINAL')

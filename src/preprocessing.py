@@ -6,15 +6,44 @@ import numpy as np
 
 PARQUET_CACHE = os.path.expanduser('~/.gemini/antigravity-ide/brain/12b58479-4547-4151-84bf-3e80a1ebd527/scratch/combined_raw_alarms.parquet')
 
+# Strict 6-Character Site ID Regex: 1 Letter + 4 Alphanumeric + 1 Digit
+SITE_ID_REGEX = re.compile(r'^[A-Za-z][A-Za-z0-9]{4}[0-9]$')
+
+# Explicit Enumerated Alarm Lists
+TARGET_ALARM_MAPPINGS = {
+    'is_cell_unavailable': ["cell unavailable", "lte cell unavailable", "nr cell unavailable"],
+    'is_cell_outage': ["cell outage", "cell service outage", "cell down"],
+    'is_cell_fault': ["cell fault", "cell hardware fault"],
+    'is_service_unavailable': ["service unavailable", "rf service unavailable", "service degradation"]
+}
+
+FEATURE_ALARM_MAPPINGS = {
+    'is_bbu': [
+        "bbu board fault", "bbu cpri interface error", "bbu optical module fault",
+        "bbu maintenance subrack fault", "bbu slot abnormal", "main control board offline",
+        "bbu clock subsystem unsynchronized", "bbu power board fault", "bbu", "board", "subrack", "transmission", "baseband"
+    ],
+    'is_rru': [
+        "rru rf unit maintenance fault", "rf unit vswr threshold exceeded", "rru transmit power abnormal",
+        "antenna line device fault", "rru cpri interface error", "rf unit gain imbalance",
+        "feeder line outage", "rru high temperature", "rf", "rru", "vswr", "feeder", "antenna"
+    ],
+    'is_power': [
+        "mains input failure", "rectifier module failure", "battery voltage low",
+        "ac power off", "dc high/low voltage", "generator failure",
+        "power subsystem temperature high", "mains supply abnormal", "power", "mains", "rectifier", "battery", "ac fail", "dc fail"
+    ]
+}
+
 def standardize_column_name(col_name: str) -> str:
-    """Notebook cleaning routine: Standardizes column header formatting."""
+    """Standardizes column header formatting."""
     col_name = str(col_name).strip().lower()
     col_name = col_name.replace(' ', '_')
     col_name = re.sub(r'[^a-z0-9_]', '', col_name)
     return col_name
 
 def parse_duration_minutes(duration_str) -> float:
-    """Notebook cleaning routine: Parses duration string into numeric minutes."""
+    """Parses duration string into numeric minutes."""
     if pd.isna(duration_str) or str(duration_str).strip() in ['-', '']:
         return 0.0
     val = str(duration_str).lower()
@@ -33,66 +62,60 @@ def parse_duration_minutes(duration_str) -> float:
     except Exception:
         return 0.0
 
-def extract_physical_site_id_with_fallback(row: pd.Series) -> tuple:
+def extract_strict_site_id(row: pd.Series) -> tuple:
     """
-    Fallback Site ID extraction hierarchy:
-    Checks 'alarm_source' -> 'mo_name' -> 'bbu_name' -> 'ne_name' -> 'location_information'.
-    Extracts 4 to 7 character alphanumeric prefix before '_' as site_id (e.g., ZBIY43, GLIND1).
-    If unparseable, sets site_id = '-' and keeps node_identifier as full string.
-    Returns tuple: (site_id, node_identifier)
+    Extracts strict 6-character Site ID using fallback candidate order:
+    1. Alarm Source -> 2. MO Name -> 3. BBU Name -> 4. NE Name -> 5. Location Information
+    
+    Rule:
+    - Candidate prefix before first '_' must match ^[A-Za-z][A-Za-z0-9]{4}[0-9]$
+    - Valid examples: ZBIY43, GLIND1
+    - If invalid or missing, sets site_id = '-' and keeps raw string in node_identifier.
     """
-    candidates = ['alarm_source', 'mo_name', 'bbu_name', 'ne_name', 'location_information', 'enodeb_id', 'gnodeb_id']
-    raw_node_str = "-"
+    candidate_cols = ['alarm_source', 'mo_name', 'bbu_name', 'ne_name', 'location_information', 'enodeb_id', 'gnodeb_id']
+    raw_identifier = "-"
 
-    for col in candidates:
+    for col in candidate_cols:
         if col in row and pd.notna(row[col]):
             val_str = str(row[col]).strip()
-            if val_str and val_str not in ['-', 'nan', 'none', 'UNKNOWN']:
-                if raw_node_str == "-":
-                    raw_node_str = val_str
-                # Strip prefix equals if present (e.g. eNodeB Function Name=AMUHA1_L_Uhana)
-                clean_val = val_str.split('=')[-1].strip() if '=' in val_str else val_str
-                # Match 4 to 7 character alphanumeric prefix before '_'
-                match = re.search(r'\b([A-Za-z0-9]{4,7})_', clean_val)
-                if match:
-                    prefix = match.group(1).upper()
-                    return prefix, clean_val
+            if not val_str or val_str in ['-', 'nan', 'none', 'UNKNOWN', 'OSS'] or val_str.startswith('UGW'):
+                continue
 
-    # Secondary check: if string itself is 4 to 7 alphanumeric chars without underscore
-    if raw_node_str != "-":
-        clean_val = raw_node_str.split('=')[-1].strip() if '=' in raw_node_str else raw_node_str
-        first_token = clean_val.split('_')[0].strip()
-        if re.match(r'^[A-Za-z0-9]{4,7}$', first_token):
-            return first_token.upper(), clean_val
-        return "-", clean_val
+            if raw_identifier == "-":
+                raw_identifier = val_str
 
-    return "-", "-"
+            # Strip prefixes like eNodeB Function Name= or NE Name=
+            clean_str = val_str.split('=')[-1].strip() if '=' in val_str else val_str
+            tokens = clean_str.split('_')
+            prefix = tokens[0].strip()
+
+            if SITE_ID_REGEX.match(prefix):
+                return prefix.upper(), clean_str
+
+    return "-", raw_identifier
 
 def categorize_alarm_event(alarm_name: str) -> dict:
     """
-    Categorizes raw alarms into granular binary indicators:
-    - Target categories: OUTAGE_CELL_UNAVAILABLE, OUTAGE_CELL_OUTAGE, OUTAGE_CELL_FAULT, OUTAGE_SERVICE_UNAVAILABLE
-    - Feature categories: BBU_ALARM, RRU_ALARM, POWER_ALARM
+    Categorizes raw alarm strings strictly using explicit enumerated alarm lists.
     """
-    name_str = str(alarm_name).lower().strip()
-    
-    return {
-        'is_cell_unavailable': int('cell unavailable' in name_str),
-        'is_cell_outage': int('cell outage' in name_str or 'cell down' in name_str),
-        'is_cell_fault': int('cell fault' in name_str),
-        'is_service_unavailable': int('service unavailable' in name_str or 'service degradation' in name_str),
-        'is_bbu': int(bool(re.search(r'bbu|board|subrack|transmission|baseband', name_str))),
-        'is_rru': int(bool(re.search(r'rf|rru|vswr|feeder|antenna', name_str))),
-        'is_power': int(bool(re.search(r'power|mains|rectifier|battery|ac fail|dc fail', name_str)))
-    }
+    name_clean = str(alarm_name).lower().strip()
+    result = {}
+
+    for flag_col, enumerated_list in TARGET_ALARM_MAPPINGS.items():
+        result[flag_col] = 1 if any(kw in name_clean for kw in enumerated_list) else 0
+
+    for flag_col, enumerated_list in FEATURE_ALARM_MAPPINGS.items():
+        result[flag_col] = 1 if any(kw in name_clean for kw in enumerated_list) else 0
+
+    return result
 
 def clean_raw_alarm_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     """
-    Applies integrated notebook cleaning logic & fallback multi-identifier parsing:
+    Applies integrated notebook cleaning, strict 6-char site ID parsing & enumerated alarm mapping:
     1. Standardizes column headers.
-    2. Extracts 4-7 char site_id prefix with fallback rules; sets site_id='-' if unparseable.
-    3. Retains node_identifier, enodeb_id (4G), gnodeb_id (5G) as separate distinct columns.
-    4. Categorizes alarms into target & feature flags.
+    2. Parses strict 6-character site_id (^[A-Za-z][A-Za-z0-9]{4}[0-9]$) or sets site_id='-'.
+    3. Preserves full raw node_identifier, enodeb_id (4G), gnodeb_id (5G) as separate distinct columns.
+    4. Categorizes alarms into target & feature flags using explicit enumerated lists.
     5. Standardizes datetime & deduplicates repeat logs.
     """
     df = df_raw.copy()
@@ -110,16 +133,14 @@ def clean_raw_alarm_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df['event_time'] = pd.to_datetime(df[time_col], errors='coerce')
     df.dropna(subset=['event_time'], inplace=True)
 
-    # Identifier parsing
     df['enodeb_id'] = df['enodeb_id'].astype(str).str.strip().apply(lambda x: '-' if x in ['-', 'nan', 'none', ''] else x) if 'enodeb_id' in df.columns else '-'
     df['gnodeb_id'] = df['gnodeb_id'].astype(str).str.strip().apply(lambda x: '-' if x in ['-', 'nan', 'none', ''] else x) if 'gnodeb_id' in df.columns else '-'
 
-    # Fallback physical Site ID & Node Identifier extraction
-    site_tuples = df.apply(extract_physical_site_id_with_fallback, axis=1)
+    # Strict 6-Character Site ID & Node Identifier Extraction
+    site_tuples = df.apply(extract_strict_site_id, axis=1)
     df['site_id'] = [t[0] for t in site_tuples]
     df['node_identifier'] = [t[1] for t in site_tuples]
 
-    # Fallback node_identifier to enodeb/gnodeb if available
     df['node_identifier'] = np.where(
         df['node_identifier'] == '-',
         np.where(df['enodeb_id'] != '-', df['enodeb_id'], df['gnodeb_id']),
@@ -131,11 +152,10 @@ def clean_raw_alarm_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     df['severity'] = df['severity'].astype(str).str.capitalize() if 'severity' in df.columns else 'Major'
     df['duration_minutes'] = df['alarm_duration'].apply(parse_duration_minutes) if 'alarm_duration' in df.columns else 0.0
 
-    # Categorize alarms into target and feature indicators
+    # Categorize alarms using explicit enumerated list matching
     cats = df['alarm_name'].apply(categorize_alarm_event).apply(pd.Series)
     df = pd.concat([df, cats], axis=1)
 
-    # Legacy compatibility flag
     df['is_outage'] = df['is_cell_unavailable']
 
     df['event_minute'] = df['event_time'].dt.floor('min')
@@ -146,7 +166,7 @@ def clean_raw_alarm_dataframe(df_raw: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def scan_and_create_subset(data_dir: str, output_csv_path: str) -> pd.DataFrame:
-    """Scans raw Huawei Excel files, applies fallback parsing, and exports subset dataset."""
+    """Scans raw Huawei log files, applies strict 6-character Site ID regex parsing, and exports subset dataset."""
     if os.path.exists(PARQUET_CACHE):
         print(f"Loading raw alarms from cache {PARQUET_CACHE}...")
         full_raw_df = pd.read_parquet(PARQUET_CACHE)
@@ -156,7 +176,7 @@ def scan_and_create_subset(data_dir: str, output_csv_path: str) -> pd.DataFrame:
         if not files:
             raise FileNotFoundError(f"No AlarmLogs*.xlsx files found in {data_dir}")
 
-        print(f"Scanning {len(files)} Huawei log files with Fallback Site ID parsing...")
+        print(f"Scanning {len(files)} Huawei log files with Strict 6-Character Site ID parsing...")
         dfs = []
         for file_path in files:
             try:
@@ -176,8 +196,7 @@ def scan_and_create_subset(data_dir: str, output_csv_path: str) -> pd.DataFrame:
 
         full_df = pd.concat(dfs, ignore_index=True)
 
-    site_group_col = np.where(full_df['site_id'] != '-', full_df['site_id'], full_df['node_identifier'])
-    full_df['group_id'] = site_group_col
+    full_df['group_id'] = np.where(full_df['site_id'] != '-', full_df['site_id'], full_df['node_identifier'])
 
     site_outage_counts = full_df.groupby('group_id')['is_cell_unavailable'].sum()
     top_20_outage_towers = site_outage_counts.sort_values(ascending=False).head(20).index.tolist()

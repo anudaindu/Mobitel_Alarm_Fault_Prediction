@@ -246,7 +246,7 @@ st.markdown(f"""
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Priority Outage Queue",
     "Tower Search & Diagnostic Inspector",
-    "Manual Log Upload & Retention Engine",
+    "Batch Log Ingestion & Retention Engine",
     "🔐 Admin Settings",
     "5G Network Expansion Preview",
     "Historical Analytics & Trends",
@@ -259,7 +259,6 @@ with tab1:
         latest_timestamp = features_df['window_timestamp'].max()
         latest_df = features_df[features_df['window_timestamp'] == latest_timestamp].copy()
         
-        # Dynamic feature alignment
         X_input = pd.DataFrame(index=latest_df.index)
         for col in feature_cols:
             X_input[col] = latest_df[col] if col in latest_df.columns else 0.0
@@ -276,7 +275,6 @@ with tab1:
         warn_count = (latest_df['risk_status'] == 'WARNING').sum()
         hist_rate = (features_df['target_outage_next_2h'].mean() * 100) if 'target_outage_next_2h' in features_df.columns else 0.0
 
-        # Gradient KPI Metric Row
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
         with kpi1:
             st.markdown(f'<div class="card-blue-gradient"><div class="gradient-card-lbl">Evaluated Sites</div><div class="gradient-card-val">{total_towers}</div></div>', unsafe_allow_html=True)
@@ -291,7 +289,7 @@ with tab1:
         st.subheader("Priority Outage Operational Queue (Next 2-Hour Lookahead)")
         st.write(f"Prediction Window Timestamp: **{latest_timestamp.strftime('%Y-%m-%d %H:%M:%S')}**")
 
-        # Two distinct adjacent columns: Site ID (short) and eNodeB / gNodeB Identifier (full)
+        # Column 1: Site ID (strict 6-character ID, or '-') | Column 2: eNodeB / gNodeB Identifier
         if 'node_identifier' not in latest_df.columns:
             latest_df['node_identifier'] = np.where(latest_df['enodeb_id'] != '-', latest_df['enodeb_id'], latest_df['gnodeb_id'])
 
@@ -300,7 +298,7 @@ with tab1:
 
         queue_df['failure_probability'] = (queue_df['failure_probability'] * 100).map('{:.1f}%'.format)
         queue_df.rename(columns={
-            'site_id': 'Site ID (Short)',
+            'site_id': 'Site ID (Strict 6-Char)',
             'node_identifier': 'eNodeB / gNodeB Identifier',
             'enodeb_id': 'eNodeB ID (4G)',
             'gnodeb_id': 'gNodeB ID (5G)',
@@ -327,8 +325,14 @@ with tab1:
 # --- TAB 2: TOWER SEARCH & DIAGNOSTIC INSPECTOR ---
 with tab2:
     if not features_df.empty:
-        site_id_options = sorted([str(s) for s in features_df['site_id'].dropna().unique() if str(s) not in ['-', 'nan', 'none', 'UNKNOWN']])
-        node_options = sorted([str(n) for n in features_df['node_identifier'].dropna().unique() if str(n) not in ['-', 'nan', 'none', 'UNKNOWN']]) if 'node_identifier' in features_df.columns else []
+        site_id_options = sorted([
+            str(s) for s in features_df['site_id'].dropna().unique() 
+            if str(s) not in ['-', 'nan', 'none', 'UNKNOWN']
+        ])
+        node_options = sorted([
+            str(n) for n in features_df['node_identifier'].dropna().unique() 
+            if str(n) not in ['-', 'nan', 'none', 'UNKNOWN']
+        ]) if 'node_identifier' in features_df.columns else []
         
         search_options = site_id_options + [f"Identifier: {n}" for n in node_options]
         selected_search = st.selectbox("Search / Select Tower Identifier (Site ID / Full Node Identifier):", search_options)
@@ -359,7 +363,7 @@ with tab2:
             st.markdown("### Site Identifiers & Operational Risk")
             m_s1, m_s2 = st.columns(2)
             with m_s1:
-                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">Site ID (Short Code)</div><div style="font-size:18px; font-weight:700; color:#0F172A;">{selected_site}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">Site ID (Strict 6-Char)</div><div style="font-size:18px; font-weight:700; color:#0F172A;">{selected_site}</div></div>', unsafe_allow_html=True)
             with m_s2:
                 st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">Node Identifier</div><div style="font-size:15px; font-weight:700; color:#1E3A8A; word-break:break-all;">{target_node_id}</div></div>', unsafe_allow_html=True)
 
@@ -429,41 +433,57 @@ with tab2:
             present_cols = [c for c in display_cols if c in tower_alarms.columns]
             st.dataframe(tower_alarms[present_cols].head(100), height=350, width='stretch')
 
-# --- TAB 3: MANUAL LOG UPLOAD & RETENTION ENGINE ---
+# --- TAB 3: BATCH MULTI-FILE LOG INGESTION & RETENTION ENGINE ---
 with tab3:
-    st.subheader("Manual Daily Log Ingestion & 60-Day Retention Management")
-    st.write("Upload new daily Huawei alarm log exports (.xlsx / .csv). Incoming logs will be cleaned, ingested into SQLite master storage, and filtered through the automated 60-day auto-purge engine.")
+    st.subheader("Batch Multi-File Log Ingestion & 60-Day Retention Management")
+    st.write("Upload daily or multi-month historical Huawei alarm log exports (.xlsx / .csv). Multi-file batch uploads will be cleaned, ingested into SQLite master storage, and filtered through the automated 60-day auto-purge engine.")
 
-    uploaded_file = st.file_uploader("Choose Daily Alarm Log Export (.xlsx or .csv):", type=['xlsx', 'csv'])
+    # Multi-file & folder batch uploader support
+    uploaded_files = st.file_uploader(
+        "Upload Daily or Multi-Month Historical Log Files (.xlsx or .csv):",
+        type=['xlsx', 'csv'],
+        accept_multiple_files=True
+    )
 
-    if uploaded_file is not None:
-        if st.button("Ingest Log File & Run Outage Risk Scoring", type="primary"):
-            with st.spinner("Processing manual log upload with notebook data cleaning and database ingestion..."):
-                res = process_manual_file_upload(uploaded_file, uploaded_file.name)
+    if uploaded_files:
+        st.info(f"Selected {len(uploaded_files)} log file(s) for batch processing.")
+        if st.button("Ingest Batch Log Files & Run Outage Risk Scoring", type="primary"):
+            total_raw = 0
+            total_cleaned = 0
+            total_inserted = 0
+            results_list = []
+
+            with st.spinner(f"Batch processing {len(uploaded_files)} file(s) with strict 6-char site ID regex and SQLite ingestion..."):
+                for up_file in uploaded_files:
+                    res = process_manual_file_upload(up_file, up_file.name)
+                    total_raw += res['raw_rows']
+                    total_cleaned += res['cleaned_rows']
+                    total_inserted += res['inserted_db_records']
+                    results_list.append(res['site_risk_scores'])
+
+                st.success(f"Successfully batch-processed {len(uploaded_files)} file(s) into SQLite master database!")
                 
-                st.success(f"Successfully processed {res['filename']}!")
-                
-                m1, m2, m3, m4 = st.columns(4)
+                m1, m2, m3 = st.columns(3)
                 with m1:
-                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Raw Log Rows</div><div style="font-size:24px; font-weight:700;">{res["raw_rows"]:,}</div></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Total Raw Log Rows</div><div style="font-size:24px; font-weight:700;">{total_raw:,}</div></div>', unsafe_allow_html=True)
                 with m2:
-                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Cleaned Records</div><div style="font-size:24px; font-weight:700;">{res["cleaned_rows"]:,}</div></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Total Cleaned Records</div><div style="font-size:24px; font-weight:700;">{total_cleaned:,}</div></div>', unsafe_allow_html=True)
                 with m3:
-                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">DB Records Inserted</div><div style="font-size:24px; font-weight:700;">{res["inserted_db_records"]:,}</div></div>', unsafe_allow_html=True)
-                with m4:
-                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Unique Sites Evaluated</div><div style="font-size:24px; font-weight:700;">{res["unique_sites_processed"]}</div></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">SQLite Records Inserted</div><div style="font-size:24px; font-weight:700;">{total_inserted:,}</div></div>', unsafe_allow_html=True)
 
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.subheader("Instant Outage Risk Assessment for Uploaded Sites")
-                st.dataframe(res['site_risk_scores'], height=350, width='stretch')
+                if results_list:
+                    combined_risk_df = pd.concat(results_list, ignore_index=True)
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.subheader("Instant Outage Risk Assessment for Uploaded Sites")
+                    st.dataframe(combined_risk_df, height=350, width='stretch')
 
     st.markdown("---")
-    st.subheader("Automated 60-Day Retention Engine Status")
+    st.subheader("Automated 60-Day Retention Engine Status (Pure SQLite)")
     db_summary = get_master_history_summary()
     
     col_ret1, col_ret2, col_ret3 = st.columns(3)
     with col_ret1:
-        st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Master DB Total Records</div><div style="font-size:24px; font-weight:700;">{db_summary.get("total_records", 0):,}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">SQLite Master Total Records</div><div style="font-size:24px; font-weight:700;">{db_summary.get("total_records", 0):,}</div></div>', unsafe_allow_html=True)
     with col_ret2:
         st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Retention Window Start Date</div><div style="font-size:20px; font-weight:700; color:#1E3A8A;">{str(db_summary.get("min_date", "N/A"))[:10]}</div></div>', unsafe_allow_html=True)
     with col_ret3:
@@ -471,7 +491,7 @@ with tab3:
 
     if st.button("Trigger Manual 60-Day Auto-Purge Scan"):
         purge_res = purge_expired_logs(retention_days=60)
-        st.info(f"Purge scan executed. Purged DB Rows: {purge_res['purged_db_rows']}, Purged Expired Raw Files: {purge_res['purged_raw_files']}")
+        st.info(f"SQLite purge scan executed. Purged DB Rows: {purge_res['purged_db_rows']}, Purged Expired Raw Files: {purge_res['purged_raw_files']}")
 
 # --- TAB 4: SECURE ADMIN PANEL & DYNAMIC CONFIGURATION ---
 with tab4:

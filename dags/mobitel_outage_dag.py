@@ -23,12 +23,16 @@ with DAG(
     description='Mobitel 4G/5G Infrastructure Outage Prediction & Auto-Purge Pipeline',
     schedule='@daily',
     catchup=False,
-    tags=['mobitel', 'ml', 'outage_prediction', 'telecom']
+    tags=['mobitel', 'ml', 'outage_prediction', 'telecom', 'sqlite']
 ) as dag:
 
     @task
-    def ingest_and_clean_data():
-        """Reads daily raw alarm logs, applies fallback parsing, and stores records in SQLite DB."""
+    def ingest_batch_logs():
+        """
+        Ingest Batch Logs Task:
+        Parses daily uploaded files, executes strict 6-character Site ID regex matching,
+        categorizes enumerated alarms, and appends clean records to SQLite.
+        """
         from src.preprocessing import scan_and_create_subset
         from src.storage_manager import insert_cleaned_alarms
         import pandas as pd
@@ -41,16 +45,19 @@ with DAG(
         elif os.path.exists(raw_downloads):
             df_cleaned = scan_and_create_subset(raw_downloads, subset_csv)
         else:
-            print("No raw log files or subset CSV found. Ingestion skipped.")
+            print("No raw log files or subset CSV found. Batch ingestion skipped.")
             return "Skipped"
 
-        inserted = insert_cleaned_alarms(df_cleaned, file_source_name='daily_ingestion_feed')
-        print(f"Ingested and cleaned {inserted} alarm records into master history database.")
-        return f"Ingested {inserted} records"
+        inserted = insert_cleaned_alarms(df_cleaned, file_source_name='airflow_batch_feed')
+        print(f"Ingested and cleaned {inserted} alarm records into SQLite master history database.")
+        return f"Ingested {inserted} records into SQLite"
 
     @task
     def auto_purge_60_days():
-        """Executes automated 60-day retention auto-purge policy SQL query on master database."""
+        """
+        Auto-Purge 60-Days Task:
+        Executes SQL query: DELETE FROM master_alarms WHERE datetime(event_time) < datetime('now', '-60 days')
+        """
         from src.storage_manager import purge_expired_logs
         purge_res = purge_expired_logs(retention_days=60)
         print(f"Auto-purge complete: {purge_res}")
@@ -58,7 +65,12 @@ with DAG(
 
     @task
     def run_model_inference():
-        """Generates dynamic feature matrix based on config/settings.json and outputs predictions."""
+        """
+        Run Model Inference Task:
+        Evaluates active features and targets from config/settings.json,
+        generates rolling aggregations (6h, 24h, 14d, 30d) at the site_id level,
+        and updates data/latest_predictions.csv.
+        """
         from src.feature_engineering import generate_sliding_window_features
         from src.model import run_model_inference as execute_inference
 
@@ -77,8 +89,8 @@ with DAG(
         print(f"Inference complete: {outage_count} high-risk outage warnings generated across {total_sites} towers.")
         return f"Inference complete for {total_sites} towers"
 
-    # Define DAG task execution flow
-    task_ingest = ingest_and_clean_data()
+    # Define Airflow task execution sequence
+    task_ingest = ingest_batch_logs()
     task_purge = auto_purge_60_days()
     task_infer = run_model_inference()
 
