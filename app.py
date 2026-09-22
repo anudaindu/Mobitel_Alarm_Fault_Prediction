@@ -9,8 +9,11 @@ import plotly.graph_objects as go
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from src.config import load_config, save_config, get_environment_mode
 from src.storage_manager import get_master_history_summary, purge_expired_logs
 from src.process_manual_upload import process_manual_file_upload
+from src.feature_engineering import generate_sliding_window_features
+from src.model import train_xgboost_model, run_model_inference
 
 # Page Configuration - Enterprise Light Theme
 st.set_page_config(
@@ -37,6 +40,9 @@ st.markdown("""
         border-radius: 8px;
         padding: 24px;
         margin-bottom: 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
     }
     .enterprise-title {
         font-size: 24px;
@@ -52,6 +58,30 @@ st.markdown("""
         margin-bottom: 0;
     }
     
+    /* Deployment Mode Badges */
+    .badge-staging {
+        background-color: #FEF3C7;
+        color: #92400E;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 6px 14px;
+        border-radius: 16px;
+        border: 1px solid #F59E0B;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .badge-production {
+        background-color: #D1FAE5;
+        color: #065F46;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 6px 14px;
+        border-radius: 16px;
+        border: 1px solid #10B981;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
     /* Gradient Metric Cards */
     .card-red-gradient {
         background: linear-gradient(135deg, #FF4D4D 0%, #F92A7F 100%);
@@ -161,6 +191,7 @@ WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 FEATURES_PATH = os.path.join(WORKSPACE_DIR, 'telecom_features_july_2026.csv')
 MODEL_PATH = os.path.join(WORKSPACE_DIR, 'models', 'calibrated_xgboost_outage.pkl')
 SUBSET_PATH = os.path.join(WORKSPACE_DIR, 'july_2026_subset_dataset.csv')
+PREDICTIONS_PATH = os.path.join(WORKSPACE_DIR, 'data', 'latest_predictions.csv')
 
 @st.cache_data
 def load_features():
@@ -184,29 +215,39 @@ def load_model():
     if os.path.exists(MODEL_PATH):
         payload = joblib.load(MODEL_PATH)
         if isinstance(payload, dict) and 'model' in payload:
-            feats = payload.get('features', ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h'])
+            feats = payload.get('features', [])
             thresh = payload.get('optimal_threshold', 0.5)
             return payload['model'], feats, thresh
-        return payload, ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h'], 0.5
-    return None, ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h'], 0.5
+        return payload, [], 0.5
+    return None, [], 0.5
 
 features_df = load_features()
 raw_subset_df = load_raw_logs()
 model, feature_cols, optimal_threshold = load_model()
+runtime_config = load_config()
+env_mode = runtime_config.get("ENVIRONMENT_MODE", "STAGING").upper()
 
-# Enterprise Header (Zero Emojis)
-st.markdown("""
+badge_html = f'<span class="badge-staging">[MODE: STAGING (TESTING)]</span>' if env_mode == 'STAGING' else f'<span class="badge-production">[MODE: PRODUCTION (FIXED)]</span>'
+
+# Enterprise Header with Environment Badge
+st.markdown(f"""
     <div class="enterprise-header">
-        <h1 class="enterprise-title">Telecom Tower Outage Prediction System</h1>
-        <p class="enterprise-subtitle">Enterprise 4G eNodeB / 5G gNodeB Operational Intelligence & Early Warning Outage Management Platform</p>
+        <div>
+            <h1 class="enterprise-title">Telecom Tower Outage Prediction System</h1>
+            <p class="enterprise-subtitle">Enterprise 4G eNodeB / 5G gNodeB Operational Intelligence & Early Warning Outage Management Platform</p>
+        </div>
+        <div>
+            {badge_html}
+        </div>
     </div>
 """, unsafe_allow_html=True)
 
-# 6 Navigation Tabs (Zero Emojis)
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+# 7 Navigation Tabs
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Priority Outage Queue",
     "Tower Search & Diagnostic Inspector",
     "Manual Log Upload & Retention Engine",
+    "🔐 Admin Settings",
     "5G Network Expansion Preview",
     "Historical Analytics & Trends",
     "Model Validation & Feature Importances"
@@ -218,8 +259,12 @@ with tab1:
         latest_timestamp = features_df['window_timestamp'].max()
         latest_df = features_df[features_df['window_timestamp'] == latest_timestamp].copy()
         
-        valid_cols = [c for c in feature_cols if c in latest_df.columns]
-        latest_df['failure_probability'] = model.predict_proba(latest_df[valid_cols])[:, 1]
+        # Dynamic feature alignment
+        X_input = pd.DataFrame(index=latest_df.index)
+        for col in feature_cols:
+            X_input[col] = latest_df[col] if col in latest_df.columns else 0.0
+
+        latest_df['failure_probability'] = model.predict_proba(X_input)[:, 1] if not X_input.empty else 0.0
         latest_df.sort_values(by='failure_probability', ascending=False, inplace=True)
         
         latest_df['risk_status'] = latest_df['failure_probability'].apply(
@@ -229,7 +274,7 @@ with tab1:
         total_towers = len(latest_df)
         crit_count = (latest_df['risk_status'] == 'CRITICAL').sum()
         warn_count = (latest_df['risk_status'] == 'WARNING').sum()
-        hist_rate = (features_df['target_outage_next_2h'].mean() * 100)
+        hist_rate = (features_df['target_outage_next_2h'].mean() * 100) if 'target_outage_next_2h' in features_df.columns else 0.0
 
         # Gradient KPI Metric Row
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -246,16 +291,17 @@ with tab1:
         st.subheader("Priority Outage Operational Queue (Next 2-Hour Lookahead)")
         st.write(f"Prediction Window Timestamp: **{latest_timestamp.strftime('%Y-%m-%d %H:%M:%S')}**")
 
-        # Multi-Identifier Layout: Site ID, eNodeB ID (4G), gNodeB ID (5G) in separate adjacent columns
-        queue_df = latest_df[[
-            'site_id', 'enodeb_id', 'gnodeb_id', 'failure_probability', 'risk_status',
-            'critical_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h',
-            'major_alarms_6h', 'total_alarms_6h', 'total_alarms_24h'
-        ]].copy()
+        # Two distinct adjacent columns: Site ID (short) and eNodeB / gNodeB Identifier (full)
+        if 'node_identifier' not in latest_df.columns:
+            latest_df['node_identifier'] = np.where(latest_df['enodeb_id'] != '-', latest_df['enodeb_id'], latest_df['gnodeb_id'])
+
+        disp_cols = [c for c in ['site_id', 'node_identifier', 'enodeb_id', 'gnodeb_id', 'failure_probability', 'risk_status', 'critical_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'consecutive_critical_streak_6h', 'total_alarms_6h'] if c in latest_df.columns]
+        queue_df = latest_df[disp_cols].copy()
 
         queue_df['failure_probability'] = (queue_df['failure_probability'] * 100).map('{:.1f}%'.format)
         queue_df.rename(columns={
-            'site_id': 'Site ID',
+            'site_id': 'Site ID (Short)',
+            'node_identifier': 'eNodeB / gNodeB Identifier',
             'enodeb_id': 'eNodeB ID (4G)',
             'gnodeb_id': 'gNodeB ID (5G)',
             'failure_probability': 'Outage Probability',
@@ -263,9 +309,8 @@ with tab1:
             'critical_alarms_6h': 'Critical Alarms (6h)',
             'rru_alarms_6h': 'RRU Alarms (6h)',
             'bbu_alarms_6h': 'BBU Alarms (6h)',
-            'major_alarms_6h': 'Major Alarms (6h)',
-            'total_alarms_6h': 'Total Alarms (6h)',
-            'total_alarms_24h': 'Total Alarms (24h)'
+            'consecutive_critical_streak_6h': 'Critical Streak (6h)',
+            'total_alarms_6h': 'Total Alarms (6h)'
         }, inplace=True)
 
         def style_queue(row):
@@ -282,45 +327,41 @@ with tab1:
 # --- TAB 2: TOWER SEARCH & DIAGNOSTIC INSPECTOR ---
 with tab2:
     if not features_df.empty:
-        # Multi-identifier search list: Search by Site ID, eNodeB ID (4G), or gNodeB ID (5G)
-        site_id_options = sorted(features_df['site_id'].unique().tolist())
-        enodeb_options = sorted([e for e in features_df['enodeb_id'].unique() if e != '-'])
-        gnodeb_options = sorted([g for g in features_df['gnodeb_id'].unique() if g != '-'])
+        site_id_options = sorted([s for s in features_df['site_id'].unique() if s != '-'])
+        node_options = sorted([n for n in features_df['node_identifier'].unique() if n != '-']) if 'node_identifier' in features_df.columns else []
         
-        search_options = site_id_options + [f"eNodeB: {e}" for e in enodeb_options] + [f"gNodeB: {g}" for g in gnodeb_options]
+        search_options = site_id_options + [f"Identifier: {n}" for n in node_options]
+        selected_search = st.selectbox("Search / Select Tower Identifier (Site ID / Full Node Identifier):", search_options)
         
-        selected_search = st.selectbox("Search / Select Tower Identifier (Site ID / eNodeB ID / gNodeB ID):", search_options)
-        
-        # Resolve target site_id from selection
-        if selected_search.startswith("eNodeB: "):
-            target_enodeb = selected_search.replace("eNodeB: ", "")
-            selected_site = features_df[features_df['enodeb_id'] == target_enodeb]['site_id'].iloc[0]
-        elif selected_search.startswith("gNodeB: "):
-            target_gnodeb = selected_search.replace("gNodeB: ", "")
-            selected_site = features_df[features_df['gnodeb_id'] == target_gnodeb]['site_id'].iloc[0]
+        if selected_search.startswith("Identifier: "):
+            target_node = selected_search.replace("Identifier: ", "")
+            selected_site_df = features_df[features_df['node_identifier'] == target_node]
+            selected_site = selected_site_df['site_id'].iloc[0] if not selected_site_df.empty else target_node
         else:
             selected_site = selected_search
+            selected_site_df = features_df[features_df['site_id'] == selected_site]
 
-        site_features = features_df[features_df['site_id'] == selected_site].sort_values('window_timestamp')
+        site_features = selected_site_df.sort_values('window_timestamp') if not selected_site_df.empty else features_df.sort_values('window_timestamp')
         latest_row = site_features.iloc[-1]
         
+        target_node_id = latest_row.get('node_identifier', latest_row.get('enodeb_id', '-'))
         target_enodeb = latest_row.get('enodeb_id', '-')
         target_gnodeb = latest_row.get('gnodeb_id', '-')
 
-        feature_cols = ['total_alarms_6h', 'critical_alarms_6h', 'major_alarms_6h', 'rru_alarms_6h', 'bbu_alarms_6h', 'total_alarms_24h']
-        input_data = pd.DataFrame([latest_row[feature_cols].to_dict()])
-        prob = model.predict_proba(input_data)[0, 1] if model is not None else 0.0
+        X_single = pd.DataFrame(index=[0])
+        for col in feature_cols:
+            X_single[col] = [latest_row[col]] if col in latest_row.index else [0.0]
+
+        prob = model.predict_proba(X_single)[0, 1] if model is not None else 0.0
         
         c_diag1, c_diag2 = st.columns([1, 2])
         with c_diag1:
             st.markdown("### Site Identifiers & Operational Risk")
-            m_s1, m_s2, m_s3 = st.columns(3)
+            m_s1, m_s2 = st.columns(2)
             with m_s1:
-                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">Site ID</div><div style="font-size:18px; font-weight:700; color:#0F172A;">{selected_site}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">Site ID (Short Code)</div><div style="font-size:18px; font-weight:700; color:#0F172A;">{selected_site}</div></div>', unsafe_allow_html=True)
             with m_s2:
-                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">eNodeB ID (4G)</div><div style="font-size:18px; font-weight:700; color:#1E3A8A;">{target_enodeb}</div></div>', unsafe_allow_html=True)
-            with m_s3:
-                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">gNodeB ID (5G)</div><div style="font-size:18px; font-weight:700; color:#1E3A8A;">{target_gnodeb}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="card-white-metric"><div style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase;">Node Identifier</div><div style="font-size:15px; font-weight:700; color:#1E3A8A; word-break:break-all;">{target_node_id}</div></div>', unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600; text-transform:uppercase;">2-Hour Outage Probability</div><div style="font-size:28px; font-weight:700; color:#1E3A8A;">{prob*100:.1f}%</div></div>', unsafe_allow_html=True)
@@ -383,21 +424,21 @@ with tab2:
         st.markdown("---")
         st.subheader("Historical Raw Alarm Event Stream (Selected Tower)")
         if not raw_subset_df.empty:
-            tower_alarms = raw_subset_df[raw_subset_df['site_id'] == selected_site].sort_values('event_time', ascending=False)
-            display_cols = ['event_time', 'site_id', 'enodeb_id', 'gnodeb_id', 'severity', 'alarm_name', 'mo_name', 'location_information']
+            tower_alarms = raw_subset_df[(raw_subset_df['site_id'] == selected_site) | (raw_subset_df.get('node_identifier', '') == target_node_id)].sort_values('event_time', ascending=False)
+            display_cols = ['event_time', 'site_id', 'node_identifier', 'enodeb_id', 'gnodeb_id', 'severity', 'alarm_name', 'mo_name', 'location_information']
             present_cols = [c for c in display_cols if c in tower_alarms.columns]
             st.dataframe(tower_alarms[present_cols].head(100), height=350, width='stretch')
 
 # --- TAB 3: MANUAL LOG UPLOAD & RETENTION ENGINE ---
 with tab3:
     st.subheader("Manual Daily Log Ingestion & 60-Day Retention Management")
-    st.write("Upload new daily Huawei alarm log exports (.xlsx / .csv). Incoming logs will be cleaned, ingested into DuckDB master storage, and filtered through the automated 60-day auto-purge engine.")
+    st.write("Upload new daily Huawei alarm log exports (.xlsx / .csv). Incoming logs will be cleaned, ingested into SQLite master storage, and filtered through the automated 60-day auto-purge engine.")
 
     uploaded_file = st.file_uploader("Choose Daily Alarm Log Export (.xlsx or .csv):", type=['xlsx', 'csv'])
 
     if uploaded_file is not None:
         if st.button("Ingest Log File & Run Outage Risk Scoring", type="primary"):
-            with st.spinner("Processing manual log upload with notebook data cleaning and DuckDB ingestion..."):
+            with st.spinner("Processing manual log upload with notebook data cleaning and database ingestion..."):
                 res = process_manual_file_upload(uploaded_file, uploaded_file.name)
                 
                 st.success(f"Successfully processed {res['filename']}!")
@@ -408,7 +449,7 @@ with tab3:
                 with m2:
                     st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Cleaned Records</div><div style="font-size:24px; font-weight:700;">{res["cleaned_rows"]:,}</div></div>', unsafe_allow_html=True)
                 with m3:
-                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">DuckDB Records Inserted</div><div style="font-size:24px; font-weight:700;">{res["inserted_db_records"]:,}</div></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">DB Records Inserted</div><div style="font-size:24px; font-weight:700;">{res["inserted_db_records"]:,}</div></div>', unsafe_allow_html=True)
                 with m4:
                     st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Unique Sites Evaluated</div><div style="font-size:24px; font-weight:700;">{res["unique_sites_processed"]}</div></div>', unsafe_allow_html=True)
 
@@ -422,7 +463,7 @@ with tab3:
     
     col_ret1, col_ret2, col_ret3 = st.columns(3)
     with col_ret1:
-        st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">DuckDB Master Total Records</div><div style="font-size:24px; font-weight:700;">{db_summary.get("total_records", 0):,}</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Master DB Total Records</div><div style="font-size:24px; font-weight:700;">{db_summary.get("total_records", 0):,}</div></div>', unsafe_allow_html=True)
     with col_ret2:
         st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Retention Window Start Date</div><div style="font-size:20px; font-weight:700; color:#1E3A8A;">{str(db_summary.get("min_date", "N/A"))[:10]}</div></div>', unsafe_allow_html=True)
     with col_ret3:
@@ -432,8 +473,107 @@ with tab3:
         purge_res = purge_expired_logs(retention_days=60)
         st.info(f"Purge scan executed. Purged DB Rows: {purge_res['purged_db_rows']}, Purged Expired Raw Files: {purge_res['purged_raw_files']}")
 
-# --- TAB 4: 5G NETWORK EXPANSION PREVIEW ---
+# --- TAB 4: SECURE ADMIN PANEL & DYNAMIC CONFIGURATION ---
 with tab4:
+    st.subheader("🔐 NOC Admin Control Panel & Dynamic Pipeline Settings")
+    
+    ADMIN_PASS = os.getenv("ADMIN_PASSWORD", "mobitel123")
+    
+    if "admin_authenticated" not in st.session_state:
+        st.session_state["admin_authenticated"] = False
+
+    if not st.session_state["admin_authenticated"]:
+        st.warning("Admin authentication required to modify model targets, feature categories, and environment modes.")
+        pwd_input = st.text_input("Enter Admin Password:", type="password", key="admin_pwd_box")
+        if st.button("Authenticate Admin Access", type="primary"):
+            if pwd_input == ADMIN_PASS:
+                st.session_state["admin_authenticated"] = True
+                st.success("Admin Authentication Successful!")
+                st.rerun()
+            else:
+                st.error("Invalid Admin Password. Access Denied.")
+    else:
+        st.success("Authenticated NOC Administrator Access Granted")
+        if st.button("Logout Admin Session"):
+            st.session_state["admin_authenticated"] = False
+            st.rerun()
+
+        st.markdown("---")
+        st.markdown("### Dynamic Configuration Engine Control")
+        st.write("Modify runtime targets, feature categories, lookback windows, and environment modes without touching codebase.")
+
+        curr_cfg = load_config()
+
+        col_adm1, col_adm2 = st.columns(2)
+
+        with col_adm1:
+            st.markdown("#### 1. Outage Target Toggles (`ACTIVE_TARGETS`)")
+            t_unavail = st.checkbox("Cell Unavailable (`OUTAGE_CELL_UNAVAILABLE`)", value="OUTAGE_CELL_UNAVAILABLE" in curr_cfg.get("ACTIVE_TARGETS", []))
+            t_outage = st.checkbox("Cell Outage / Down (`OUTAGE_CELL_OUTAGE`)", value="OUTAGE_CELL_OUTAGE" in curr_cfg.get("ACTIVE_TARGETS", []))
+            t_fault = st.checkbox("Cell Fault (`OUTAGE_CELL_FAULT`)", value="OUTAGE_CELL_FAULT" in curr_cfg.get("ACTIVE_TARGETS", []))
+            t_service = st.checkbox("Service Degradation / Unavailable (`OUTAGE_SERVICE_UNAVAILABLE`)", value="OUTAGE_SERVICE_UNAVAILABLE" in curr_cfg.get("ACTIVE_TARGETS", []))
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("#### 2. Feature Category Toggles (`ACTIVE_FEATURES`)")
+            f_bbu = st.checkbox("BBU Hardware & Board Alarms (`BBU_ALARM`)", value="BBU_ALARM" in curr_cfg.get("ACTIVE_FEATURES", []))
+            f_rru = st.checkbox("RRU & RF Feeder Alarms (`RRU_ALARM`)", value="RRU_ALARM" in curr_cfg.get("ACTIVE_FEATURES", []))
+            f_power = st.checkbox("Power & Mains Grid Alarms (`POWER_ALARM`)", value="POWER_ALARM" in curr_cfg.get("ACTIVE_FEATURES", []))
+
+        with col_adm2:
+            st.markdown("#### 3. Active Lookback Windows (`LOOKBACK_WINDOWS_HOURS`)")
+            avail_windows = [6, 24, 336, 720]
+            selected_windows = st.multiselect(
+                "Select active feature lookback horizons:",
+                options=avail_windows,
+                default=[w for w in curr_cfg.get("LOOKBACK_WINDOWS_HOURS", [6, 24, 336, 720]) if w in avail_windows],
+                format_func=lambda h: f"{h} Hours ({h//24} Days)" if h >= 24 else f"{h} Hours"
+            )
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("#### 4. Environment Mode (`ENVIRONMENT_MODE`)")
+            curr_mode = curr_cfg.get("ENVIRONMENT_MODE", "STAGING").upper()
+            selected_mode = st.radio(
+                "Select System Deployment Mode:",
+                options=["STAGING", "PRODUCTION"],
+                index=0 if curr_mode == "STAGING" else 1,
+                help="STAGING allows dynamic testing; PRODUCTION enforces fixed baseline hyperparameters."
+            )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("💾 Save Settings & Re-execute Pipeline", type="primary", use_container_width=True):
+            new_targets = []
+            if t_unavail: new_targets.append("OUTAGE_CELL_UNAVAILABLE")
+            if t_outage: new_targets.append("OUTAGE_CELL_OUTAGE")
+            if t_fault: new_targets.append("OUTAGE_CELL_FAULT")
+            if t_service: new_targets.append("OUTAGE_SERVICE_UNAVAILABLE")
+
+            new_features = []
+            if f_bbu: new_features.append("BBU_ALARM")
+            if f_rru: new_features.append("RRU_ALARM")
+            if f_power: new_features.append("POWER_ALARM")
+
+            new_config = {
+                "ACTIVE_TARGETS": new_targets,
+                "ACTIVE_FEATURES": new_features,
+                "LOOKBACK_WINDOWS_HOURS": selected_windows if selected_windows else [6, 24],
+                "ENVIRONMENT_MODE": selected_mode
+            }
+
+            save_config(new_config)
+            st.info("Settings saved to config/settings.json. Re-generating dynamic features & model predictions...")
+
+            with st.spinner("Executing dynamic feature engineering & model re-inference..."):
+                generate_sliding_window_features(SUBSET_PATH, FEATURES_PATH, config=new_config)
+                train_xgboost_model(features_csv_path=FEATURES_PATH, model_save_path=MODEL_PATH)
+                run_model_inference(features_csv_path=FEATURES_PATH, model_path=MODEL_PATH, output_predictions_path=PREDICTIONS_PATH)
+                st.cache_data.clear()
+                st.cache_resource.clear()
+
+            st.success("Dynamic configuration saved and ML inference re-executed cleanly without feature mismatch errors!")
+            st.rerun()
+
+# --- TAB 5: 5G NETWORK EXPANSION PREVIEW ---
+with tab5:
     st.subheader("5G Network Expansion Preview")
     st.write("Future expansion module reserved for 5G NR gNodeB Active Antenna Unit (AAU) and eCPRI precursor analytics.")
     
@@ -443,25 +583,23 @@ with tab4:
             <div style="font-size: 13px; color: #64748B; margin-bottom: 16px;">Dual-mode 4G/5G joint predictive analytics and Massive MIMO beamforming fault indicators are scheduled for Phase 2 integration.</div>
         </div>
     """, unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Enable 5G NR Diagnostic Module (Phase 2 Preview)", disabled=True):
-        pass
 
-# --- TAB 5: HISTORICAL ANALYTICS & TIME-SERIES TRENDS ---
-with tab5:
+# --- TAB 6: HISTORICAL ANALYTICS & TIME-SERIES TRENDS ---
+with tab6:
     st.subheader("Historical Analytics & 60-Day Time-Series Trends")
     
     if not features_df.empty:
         daily_trends = features_df.groupby(features_df['window_timestamp'].dt.date).agg({
             'total_alarms_6h': 'sum',
             'critical_alarms_6h': 'sum',
-            'target_outage_next_2h': 'sum'
+            'target_outage_next_2h': 'sum' if 'target_outage_next_2h' in features_df.columns else 'total_alarms_6h'
         }).reset_index()
         daily_trends.rename(columns={'window_timestamp': 'Date', 'target_outage_next_2h': 'Outage Windows'}, inplace=True)
         
         fig_trend = go.Figure()
         fig_trend.add_trace(go.Bar(x=daily_trends['Date'], y=daily_trends['total_alarms_6h'], name='Total Alarm Volume', marker_color='#4EA8DE'))
-        fig_trend.add_trace(go.Scatter(x=daily_trends['Date'], y=daily_trends['Outage Windows'], name='Actual Cell Outages', yaxis='y2', line=dict(color='#FF4D4D', width=3)))
+        if 'Outage Windows' in daily_trends.columns:
+            fig_trend.add_trace(go.Scatter(x=daily_trends['Date'], y=daily_trends['Outage Windows'], name='Actual Cell Outages', yaxis='y2', line=dict(color='#FF4D4D', width=3)))
         
         fig_trend.update_layout(
             template='plotly_white',
@@ -493,8 +631,8 @@ with tab5:
             fig_sev = px.bar(sev_df, x='Severity', y='Count', color='Severity', color_discrete_sequence=['#4EA8DE', '#06D6A0', '#FF4D4D', '#FFB703'], template='plotly_white')
             st.plotly_chart(fig_sev, use_container_width=True)
 
-# --- TAB 6: MODEL VALIDATION & FEATURE IMPORTANCES ---
-with tab6:
+# --- TAB 7: MODEL VALIDATION & FEATURE IMPORTANCES ---
+with tab7:
     st.subheader("Calibrated Model Holdout Validation Metrics")
     st.write("Strict Chronological Holdout Validation Window: **July 23, 2026 – July 31, 2026** (3,780 Test Samples)")
     
@@ -504,7 +642,7 @@ with tab6:
     with vm2:
         st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">ROC-AUC Score</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">0.9611</div></div>', unsafe_allow_html=True)
     with vm3:
-        st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Opt Threshold</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">0.1932</div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Opt Threshold</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">{optimal_threshold:.4f}</div></div>', unsafe_allow_html=True)
     with vm4:
         st.markdown('<div class="card-white-metric"><div style="font-size:12px; color:#6B7280; font-weight:600;">Precision @ Opt</div><div style="font-size:26px; font-weight:700; color:#1E3A8A;">0.6230</div></div>', unsafe_allow_html=True)
     with vm5:
@@ -527,7 +665,11 @@ with tab6:
         st.write("### Calibrated Failure Probability Distribution")
         if not features_df.empty and model is not None:
             valid_cols = [c for c in feature_cols if c in features_df.columns]
-            probs = model.predict_proba(features_df[valid_cols])[:, 1]
-            fig_hist = px.histogram(probs, nbins=50, labels={'value': 'Predicted Outage Probability'}, color_discrete_sequence=['#1E3A8A'], template='plotly_white')
-            fig_hist.update_layout(xaxis_title="Calibrated Failure Probability", yaxis_title="Sample Count")
-            st.plotly_chart(fig_hist, use_container_width=True)
+            if valid_cols:
+                X_dist = pd.DataFrame(index=features_df.index)
+                for col in feature_cols:
+                    X_dist[col] = features_df[col] if col in features_df.columns else 0.0
+                probs = model.predict_proba(X_dist)[:, 1]
+                fig_hist = px.histogram(probs, nbins=50, labels={'value': 'Predicted Outage Probability'}, color_discrete_sequence=['#1E3A8A'], template='plotly_white')
+                fig_hist.update_layout(xaxis_title="Calibrated Failure Probability", yaxis_title="Sample Count")
+                st.plotly_chart(fig_hist, use_container_width=True)

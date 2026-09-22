@@ -4,19 +4,21 @@ __pycache__/
 *$py.class
 .ipynb_checkpoints/
 
-# Data & Models
-*.csv
-*.xlsx
+# Data & Models (excluding trackable CSV structure)
 *.parquet
 *.h5
-*.pkl
 *.joblib
-models/*.pkl
 models/*.h5
 models/*.joblib
+data/*.db
+data/daily_uploads/
 
-# Environments & OS
+# Environments & OS & Airflow local DBs
 .env
 venv/
 env/
+py_env/
+.vscode/
+airflow.db
+airflow.cfg
 .DS_Store
