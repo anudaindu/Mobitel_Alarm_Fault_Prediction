@@ -327,8 +327,8 @@ with tab1:
 # --- TAB 2: TOWER SEARCH & DIAGNOSTIC INSPECTOR ---
 with tab2:
     if not features_df.empty:
-        site_id_options = sorted([s for s in features_df['site_id'].unique() if s != '-'])
-        node_options = sorted([n for n in features_df['node_identifier'].unique() if n != '-']) if 'node_identifier' in features_df.columns else []
+        site_id_options = sorted([str(s) for s in features_df['site_id'].dropna().unique() if str(s) not in ['-', 'nan', 'none', 'UNKNOWN']])
+        node_options = sorted([str(n) for n in features_df['node_identifier'].dropna().unique() if str(n) not in ['-', 'nan', 'none', 'UNKNOWN']]) if 'node_identifier' in features_df.columns else []
         
         search_options = site_id_options + [f"Identifier: {n}" for n in node_options]
         selected_search = st.selectbox("Search / Select Tower Identifier (Site ID / Full Node Identifier):", search_options)

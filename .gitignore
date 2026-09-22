@@ -4,7 +4,9 @@ __pycache__/
 *$py.class
 .ipynb_checkpoints/
 
-# Data & Models (excluding trackable CSV structure)
+# Data & Models (excluding large raw datasets)
+*.csv
+*.xlsx
 *.parquet
 *.h5
 *.joblib
@@ -12,6 +14,7 @@ models/*.h5
 models/*.joblib
 data/*.db
 data/daily_uploads/
+data/latest_predictions.csv
 
 # Environments & OS & Airflow local DBs
 .env
