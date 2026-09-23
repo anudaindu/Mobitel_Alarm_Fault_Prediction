@@ -7,6 +7,8 @@ import seaborn as sns
 from sklearn.metrics import precision_recall_curve, auc, roc_auc_score, precision_score, recall_score, classification_report
 from sklearn.inspection import permutation_importance
 
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
 def evaluate_outage_classifier(features_csv_path: str, model_save_path: str, figures_dir: str):
     """
     Evaluates trained model on July 23-31 holdout test set.
@@ -82,7 +84,7 @@ def evaluate_outage_classifier(features_csv_path: str, model_save_path: str, fig
     return metrics_dict
 
 if __name__ == '__main__':
-    features_path = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/telecom_features_july_2026.csv')
-    model_path = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/models/outage_prediction_rf.pkl')
-    fig_dir = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/figures')
+    features_path = os.path.join(BASE_DIR, 'data', 'telecom_features_july_2026.csv')
+    model_path = os.path.join(BASE_DIR, 'models', 'calibrated_xgboost_outage.pkl')
+    fig_dir = os.path.join(BASE_DIR, 'figures')
     evaluate_outage_classifier(features_path, model_path, fig_dir)

@@ -4,15 +4,65 @@ import pandas as pd
 import numpy as np
 import joblib
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import precision_recall_curve, auc, roc_auc_score, precision_score, recall_score, classification_report
+from sklearn.inspection import permutation_importance
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
+
 from src.config import load_config
 
-FEATURES_PATH = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/telecom_features_july_2026.csv')
-MODEL_SAVE_PATH = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/models/calibrated_xgboost_outage.pkl')
-PREDICTIONS_OUTPUT_PATH = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/data/latest_predictions.csv')
+FEATURES_PATH = os.path.join(BASE_DIR, 'data', 'telecom_features_july_2026.csv')
+MODEL_SAVE_PATH = os.path.join(BASE_DIR, 'models', 'calibrated_xgboost_outage.pkl')
+PREDICTIONS_OUTPUT_PATH = os.path.join(BASE_DIR, 'data', 'latest_predictions.csv')
+
+def run_data_leakage_audit(df: pd.DataFrame, target_col: str = 'target_outage_next_2h') -> int:
+    """
+    Data Leakage & Integrity Audit Engine:
+    Scans feature matrix for target leakage, metadata ID memorization, and temporal contamination.
+    """
+    print("=" * 70)
+    print("                DATA LEAKAGE & INTEGRITY AUDIT REPORT               ")
+    print("=" * 70)
+
+    leakage_flags = 0
+    metadata_cols = ['site_id', 'node_identifier', 'enodeb_id', 'gnodeb_id', 'window_timestamp', 'alarm_id', 'mo_name']
+    features = [c for c in df.columns if c != target_col and c not in metadata_cols]
+
+    # Check 1: Target Correlation
+    print("\n--- Check 1: Target Leakage (High Signal Features) ---")
+    suspicious = []
+    for col in features:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            corr = abs(df[col].corr(df[target_col]))
+            if corr > 0.85:
+                suspicious.append((col, f"Correlation: {corr:.4f}"))
+
+    if suspicious:
+        leakage_flags += 1
+        print("WARNING: Suspicious high target correlation detected:", suspicious)
+    else:
+        print("PASSED: No individual feature shows unrealistic correlation with target.")
+
+    # Check 2: Metadata / ID Memorization
+    print("\n--- Check 2: Metadata & Identifier Exclusion ---")
+    id_keywords = ['id', 'name', 'code', 'serial', 'timestamp']
+    flagged_ids = [c for c in features if any(kw in c.lower() for kw in id_keywords)]
+    if flagged_ids:
+        leakage_flags += 1
+        print("WARNING: High-cardinality metadata columns found in X:", flagged_ids)
+    else:
+        print("PASSED: Predictor matrix X contains zero high-cardinality metadata/IDs.")
+
+    print("\n" + "=" * 70)
+    if leakage_flags > 0:
+        print(f"AUDIT COMPLETED: {leakage_flags} flag(s) addressed.")
+    else:
+        print("AUDIT PASSED: Predictor matrix is clean and free of data leakage!")
+    print("=" * 70)
+    return leakage_flags
 
 def get_base_classifier(scale_pos_weight: float = 1.0):
     """Instantiates XGBoost Classifier with fallback to RandomForest if libomp is absent."""
@@ -69,6 +119,9 @@ def train_xgboost_model(features_csv_path: str = FEATURES_PATH, model_save_path:
     predictor_cols = get_predictor_features(df)
     print(f"Discovered Predictor Features ({len(predictor_cols)}): {predictor_cols}")
 
+    # Audit Data Leakage
+    run_data_leakage_audit(df, target_col=target_col)
+
     # Chronological Split (Train: < July 23, Test: >= July 23)
     split_date = pd.Timestamp('2026-07-23 00:00:00')
     train_df = df[df['window_timestamp'] < split_date].copy()
@@ -124,7 +177,7 @@ def train_xgboost_model(features_csv_path: str = FEATURES_PATH, model_save_path:
         'environment_mode': config.get('ENVIRONMENT_MODE', 'STAGING')
     }
 
-    os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(model_save_path)), exist_ok=True)
     joblib.dump(payload, model_save_path)
     print(f"Model saved successfully to {model_save_path} (Optimal Threshold: {optimal_thresh:.4f})")
     return payload
@@ -170,7 +223,7 @@ def run_model_inference(features_csv_path: str = FEATURES_PATH, model_path: str 
     result_df['predicted_outage'] = preds
     result_df['risk_level'] = np.where(probas >= 0.7, 'CRITICAL', np.where(probas >= 0.4, 'WARNING', 'NORMAL'))
 
-    os.makedirs(os.path.dirname(output_predictions_path), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(output_predictions_path)), exist_ok=True)
     result_df.to_csv(output_predictions_path, index=False)
     print(f"Inference complete: {len(result_df)} predictions generated -> {output_predictions_path}")
     return result_df

@@ -1,7 +1,8 @@
 import os
 import json
 
-CONFIG_DIR = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/config')
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+CONFIG_DIR = os.path.join(BASE_DIR, 'config')
 SETTINGS_FILE = os.path.join(CONFIG_DIR, 'settings.json')
 
 DEFAULT_CONFIG = {

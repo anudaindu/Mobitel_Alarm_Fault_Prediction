@@ -5,12 +5,14 @@ import pandas as pd
 import numpy as np
 import joblib
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
 
 from src.preprocessing import clean_raw_alarm_dataframe
 from src.storage_manager import insert_cleaned_alarms, UPLOADS_DIR
 
-MODEL_PATH = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/models/calibrated_xgboost_outage.pkl')
+MODEL_PATH = os.path.join(BASE_DIR, 'models', 'calibrated_xgboost_outage.pkl')
 
 def process_manual_file_upload(file_input, original_filename: str) -> dict:
     """

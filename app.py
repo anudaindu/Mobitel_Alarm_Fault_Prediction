@@ -187,11 +187,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
-FEATURES_PATH = os.path.join(WORKSPACE_DIR, 'telecom_features_july_2026.csv')
-MODEL_PATH = os.path.join(WORKSPACE_DIR, 'models', 'calibrated_xgboost_outage.pkl')
-SUBSET_PATH = os.path.join(WORKSPACE_DIR, 'july_2026_subset_dataset.csv')
-PREDICTIONS_PATH = os.path.join(WORKSPACE_DIR, 'data', 'latest_predictions.csv')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FEATURES_PATH = os.path.join(BASE_DIR, 'data', 'telecom_features_july_2026.csv')
+MODEL_PATH = os.path.join(BASE_DIR, 'models', 'calibrated_xgboost_outage.pkl')
+SUBSET_PATH = os.path.join(BASE_DIR, 'data', 'july_2026_subset_dataset.csv')
+PREDICTIONS_PATH = os.path.join(BASE_DIR, 'data', 'latest_predictions.csv')
 
 @st.cache_data
 def load_features():

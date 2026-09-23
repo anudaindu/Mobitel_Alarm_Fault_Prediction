@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import joblib
 
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
 def predict_cell_unavailability(feature_input: pd.DataFrame, model_path: str) -> np.ndarray:
     """
     Loads trained model and predicts probabilities for cell unavailability outage in the next 2 hours.
@@ -14,7 +16,7 @@ def predict_cell_unavailability(feature_input: pd.DataFrame, model_path: str) ->
     return probabilities
 
 if __name__ == '__main__':
-    model_path = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/models/outage_prediction_rf.pkl')
+    model_path = os.path.join(BASE_DIR, 'models', 'calibrated_xgboost_outage.pkl')
     sample_df = pd.DataFrame([{
         'total_alarms_6h': 15,
         'critical_alarms_6h': 4,

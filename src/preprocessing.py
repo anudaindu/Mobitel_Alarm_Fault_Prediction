@@ -4,7 +4,8 @@ import glob
 import pandas as pd
 import numpy as np
 
-PARQUET_CACHE = os.path.expanduser('~/.gemini/antigravity-ide/brain/12b58479-4547-4151-84bf-3e80a1ebd527/scratch/combined_raw_alarms.parquet')
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+PARQUET_CACHE = os.path.join(BASE_DIR, 'data', 'combined_raw_alarms.parquet')
 
 # Strict 6-Character Site ID Regex: 1 Letter + 4 Alphanumeric + 1 Digit
 SITE_ID_REGEX = re.compile(r'^[A-Za-z][A-Za-z0-9]{4}[0-9]$')
@@ -217,5 +218,5 @@ def scan_and_create_subset(data_dir: str, output_csv_path: str) -> pd.DataFrame:
 
 if __name__ == '__main__':
     data_dir = os.path.expanduser('~/Downloads/AlarmLogs20260803113740030')
-    output_path = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/july_2026_subset_dataset.csv')
+    output_path = os.path.join(BASE_DIR, 'data', 'july_2026_subset_dataset.csv')
     scan_and_create_subset(data_dir, output_path)

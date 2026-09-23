@@ -3,7 +3,9 @@ import sys
 import pandas as pd
 import numpy as np
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
 from src.config import load_config, get_active_targets, get_active_features, get_lookback_windows
 
 def generate_sliding_window_features(subset_csv_path: str, output_features_path: str, config: dict = None) -> pd.DataFrame:
@@ -183,6 +185,6 @@ def generate_sliding_window_features(subset_csv_path: str, output_features_path:
     return features_df
 
 if __name__ == '__main__':
-    subset_csv = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/july_2026_subset_dataset.csv')
-    output_features = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/telecom_features_july_2026.csv')
+    subset_csv = os.path.join(BASE_DIR, 'data', 'july_2026_subset_dataset.csv')
+    output_features = os.path.join(BASE_DIR, 'data', 'telecom_features_july_2026.csv')
     generate_sliding_window_features(subset_csv, output_features)

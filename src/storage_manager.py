@@ -4,7 +4,8 @@ import sqlite3
 import datetime
 import pandas as pd
 
-DATA_DIR = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/data')
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+DATA_DIR = os.path.join(BASE_DIR, 'data')
 UPLOADS_DIR = os.path.join(DATA_DIR, 'daily_uploads')
 DB_PATH = os.path.join(DATA_DIR, 'telecom_master_history.db')
 

@@ -3,9 +3,13 @@ import sys
 from datetime import datetime, timedelta
 
 from airflow import DAG
+# pyrefly: ignore [missing-import]
 from airflow.decorators import task
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Define dynamic Base Directory (Project Root: Mobitel_Alarm_Fault_Prediction/)
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
 
 default_args = {
     'owner': 'mobitel_noc_team',
@@ -37,12 +41,13 @@ with DAG(
         from src.storage_manager import insert_cleaned_alarms
         import pandas as pd
 
-        subset_csv = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/july_2026_subset_dataset.csv')
-        raw_downloads = os.path.expanduser('~/Downloads/AlarmLogs20260803113740030')
+        # Dynamic paths relative to workspace root
+        subset_csv = os.path.join(BASE_DIR, 'data', 'july_2026_subset_dataset.csv')
+        raw_downloads = os.path.join(BASE_DIR, 'data', 'daily_uploads')
 
         if os.path.exists(subset_csv):
             df_cleaned = pd.read_csv(subset_csv, low_memory=False)
-        elif os.path.exists(raw_downloads):
+        elif os.path.exists(raw_downloads) and len(os.listdir(raw_downloads)) > 0:
             df_cleaned = scan_and_create_subset(raw_downloads, subset_csv)
         else:
             print("No raw log files or subset CSV found. Batch ingestion skipped.")
@@ -74,9 +79,9 @@ with DAG(
         from src.feature_engineering import generate_sliding_window_features
         from src.model import run_model_inference as execute_inference
 
-        subset_csv = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/july_2026_subset_dataset.csv')
-        features_csv = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/telecom_features_july_2026.csv')
-        predictions_output = os.path.expanduser('~/Desktop/mobitel project/Mobitel_Alarm_Fault_Prediction/data/latest_predictions.csv')
+        subset_csv = os.path.join(BASE_DIR, 'data', 'july_2026_subset_dataset.csv')
+        features_csv = os.path.join(BASE_DIR, 'data', 'telecom_features_july_2026.csv')
+        predictions_output = os.path.join(BASE_DIR, 'data', 'latest_predictions.csv')
 
         print("1. Generating config-driven sliding window features...")
         generate_sliding_window_features(subset_csv, features_csv)
