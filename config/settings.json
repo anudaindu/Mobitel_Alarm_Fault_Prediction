@@ -13,5 +13,9 @@
     720,
     6
   ],
-  "ENVIRONMENT_MODE": "PRODUCTION"
+  "ENVIRONMENT_MODE": "PRODUCTION",
+  "DECAY_LAMBDA": 0.05,
+  "CACHE_PATH": "data/latest_predictions.csv",
+  "DELTA_LOGS_DIR": "data/daily_uploads",
+  "SEQUENCE_STATE_PATH": "data/precursor_state.json"
 }

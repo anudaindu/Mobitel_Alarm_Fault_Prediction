@@ -23,7 +23,11 @@ DEFAULT_CONFIG = {
         336,
         720
     ],
-    "ENVIRONMENT_MODE": "STAGING"
+    "ENVIRONMENT_MODE": "STAGING",
+    "DECAY_LAMBDA": 0.05,
+    "CACHE_PATH": "data/latest_predictions.csv",
+    "DELTA_LOGS_DIR": "data/daily_uploads",
+    "SEQUENCE_STATE_PATH": "data/precursor_state.json"
 }
 
 def load_config() -> dict:
@@ -64,6 +68,22 @@ def get_lookback_windows() -> list:
 
 def get_environment_mode() -> str:
     return load_config().get("ENVIRONMENT_MODE", DEFAULT_CONFIG["ENVIRONMENT_MODE"])
+
+def get_cache_path() -> str:
+    """Return the absolute path to the prediction cache CSV."""
+    return os.path.join(BASE_DIR, load_config().get("CACHE_PATH", "data/latest_predictions.csv"))
+
+def get_delta_logs_dir() -> str:
+    """Return the absolute path to the directory containing daily delta log CSVs."""
+    return os.path.join(BASE_DIR, load_config().get("DELTA_LOGS_DIR", "data/daily_uploads"))
+
+def get_sequence_state_path() -> str:
+    """Return the absolute path to the precursor sequence state JSON file."""
+    return os.path.join(BASE_DIR, load_config().get("SEQUENCE_STATE_PATH", "data/precursor_state.json"))
+
+def get_decay_lambda() -> float:
+    """Return the decay lambda value for time decay weighting."""
+    return float(load_config().get("DECAY_LAMBDA", 0.05))
 
 if __name__ == '__main__':
     cfg = load_config()
